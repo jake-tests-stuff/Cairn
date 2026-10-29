@@ -417,6 +417,8 @@ table.hist th{ text-transform:none; letter-spacing:0; font-size:12px; }
 .switch{ border:none; }
 .switch.on{ background:var(--accent); }
 .daytitle .wk{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.swatch{ width:38px; height:38px; border-radius:50%; border:3px solid var(--surface); background:var(--sw); box-shadow:0 0 0 1px var(--line); padding:0; }
+.swatch.on{ box-shadow:0 0 0 2px var(--fg); }
 .statrow{ grid-template-columns:1.35fr 1fr 1fr; }
 .stat .sv{ font-size:26px; }
 .setline .exname{ font-family:'Archivo',system-ui,sans-serif; font-size:16px; font-weight:600; text-transform:none; letter-spacing:0; }
@@ -1548,10 +1550,25 @@ function dateStrAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.g
 function offlineNote(){ return `<div class="offlineflag">Not connected. Entries here will not be saved.</div>`; }
 
 /* ---- settings (per-viewer, stored locally) ---- */
-let settings = { timer:true, sound:true, units:'imperial', theme:'system' };
+let settings = { timer:true, sound:true, units:'imperial', theme:'system', accent:'amber' };
 try{ const s = JSON.parse(localStorage.getItem('cairn_settings')||'null'); if (s) settings = Object.assign(settings, s); }catch(e){}
-function applyTheme(){ const r = document.documentElement; if (settings.theme === 'light' || settings.theme === 'dark') r.setAttribute('data-theme', settings.theme); else r.removeAttribute('data-theme'); }
-applyTheme();
+const ACCENTS = {
+  amber:{ n:'Amber' },
+  ember:{ n:'Ember', d:'#E5654F', l:'#B23A26' },
+  teal:{ n:'Teal', d:'#4FB3A9', l:'#1F7A72' },
+  steel:{ n:'Steel', d:'#6FA3E0', l:'#2F63A8' },
+  violet:{ n:'Violet', d:'#A98BE0', l:'#6B4BB0' }
+};
+function applyAccent(){
+  const r = document.documentElement, a = ACCENTS[settings.accent];
+  if (!a || !a.d){ r.style.removeProperty('--accent'); r.style.removeProperty('--accent-fg'); return; }
+  const light = settings.theme === 'light' || (settings.theme !== 'dark' && window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches);
+  r.style.setProperty('--accent', light ? a.l : a.d);
+  r.style.setProperty('--accent-fg', light ? '#FFFFFF' : '#14120F');
+}
+try{ matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => applyAccent()); }catch(e){}
+function applyTheme(){ const r = document.documentElement; if (settings.theme === 'light' || settings.theme === 'dark') r.setAttribute('data-theme', settings.theme); else r.removeAttribute('data-theme'); applyAccent(); }
+applyTheme(); applyAccent();
 function saveSettings(){ try{ localStorage.setItem('cairn_settings', JSON.stringify(settings)); }catch(e){} }
 const isMetric = () => settings.units === 'metric';
 const distUnit = () => isMetric() ? 'km' : 'mi';
@@ -1957,13 +1974,48 @@ function startRest(key){
   if (!it || isWarm(it.ex)) return;
   const sec = parseRestSec(it.rest);
   if (!sec) return;
+  primeBeep();
   restT = { end: Date.now()+sec*1000, total: sec, label: it.ex.replace(/\s*\((PRIMARY|secondary)\)/,''), fired:false };
   if (!restInt) restInt = setInterval(tickRest, 250);
   tickRest();
 }
+/* iPhone silent switch: Web Audio is muted by it, but an audio element on the "playback" channel is not.
+   The element must be unlocked by a tap, so we prime it when the rest timer starts (that start comes from tapping a set). */
+let beepEl = null;
+function beepSrc(){
+  const sr = 8000, n = Math.floor(sr*0.5), buf = new ArrayBuffer(44 + n*2), v = new DataView(buf);
+  const w = (o,s) => { for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+  w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,n*2,true);
+  for (let i=0;i<n;i++){ const t = i/sr, on = (t<0.16) || (t>0.26 && t<0.42); const env = on ? Math.min(1, (t<0.26 ? t : t-0.26)*60) : 0; v.setInt16(44+i*2, Math.sin(2*Math.PI*880*t)*env*9000, true); }
+  let s = ''; const u = new Uint8Array(buf); for (let i=0;i<u.length;i++) s += String.fromCharCode(u[i]);
+  return 'data:audio/wav;base64,' + btoa(s);
+}
+function primeBeep(){
+  if (!settings.sound) return;
+  try{
+    if (!beepEl){ beepEl = new Audio(beepSrc()); beepEl.preload = 'auto'; }
+    beepEl.muted = true; const p = beepEl.play();
+    const done = () => { try{ beepEl.pause(); beepEl.currentTime = 0; beepEl.muted = false; }catch(e){} };
+    if (p && p.then) p.then(done).catch(() => {}); else done();
+  }catch(e){}
+}
 function alertRest(){
   try{ if (navigator.vibrate) navigator.vibrate([140,70,140]); }catch(e){}
   if (!settings.sound) return;
+  try{
+    if (beepEl){
+      try{ if (navigator.audioSession) navigator.audioSession.type = 'playback'; }catch(e){}
+      beepEl.muted = false; beepEl.volume = 1; beepEl.currentTime = 0;
+      const p = beepEl.play();
+      beepEl.onended = () => { try{ if (navigator.audioSession) navigator.audioSession.type = 'auto'; }catch(e){} };
+      if (p && p.then){ p.catch(() => alertRestWeb()); }
+      return;
+    }
+  }catch(e){}
+  alertRestWeb();
+}
+function alertRestWeb(){
   try{
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
@@ -3206,7 +3258,8 @@ function renderSettings(){
     </div>
     <div class="card">
       <div class="exname">Appearance</div>
-      <div class="notes">System follows your iPhone's Light or Dark setting.</div>
+      <div class="notes">Accent color, then Light or Dark. System follows your iPhone.</div>
+      <div class="rareas" id="accentPick">${Object.entries(ACCENTS).map(([k,a]) => `<button class="swatch ${settings.accent===k?'on':''}" data-accent="${k}" aria-label="${a.n}" style="--sw:${a.d || '#E0A233'}"></button>`).join('')}</div>
       <div class="rareas" id="themePick">${[['system','System'],['light','Light'],['dark','Dark']].map(([k,l]) => `<button class="mpick ${settings.theme===k?'on':''}" data-theme-pick="${k}">${l}</button>`).join('')}</div>
     </div>
     <div class="card">
@@ -3236,6 +3289,10 @@ function renderSettings(){
       <div class="notes">A cairn is a stack of stones that marks the trail. Each logged set is another stone.</div>
     </div>`;
   document.getElementById('swTimer').onclick = (e) => { settings.timer = !settings.timer; saveSettings(); e.currentTarget.classList.toggle('on', settings.timer); };
+  document.querySelectorAll('[data-accent]').forEach(b => b.onclick = () => {
+    settings.accent = b.dataset.accent; saveSettings(); applyAccent();
+    document.querySelectorAll('[data-accent]').forEach(x => x.classList.toggle('on', x === b));
+  });
   document.querySelectorAll('[data-theme-pick]').forEach(b => b.onclick = () => {
     settings.theme = b.dataset.themePick; saveSettings(); applyTheme();
     document.querySelectorAll('[data-theme-pick]').forEach(x => x.classList.toggle('on', x === b));
