@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Cairn lab</title>
+<style>
+html{ background:#14120F; }
+body{ margin:0; background:#14120F; color:#F2EEE7; font:14px/1.35 -apple-system,system-ui,sans-serif; padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 40px; }
+.bar{ position:fixed; left:0; right:0; height:16px; font:11px/16px monospace; color:#000; padding-left:6px; }
+#probe{ position:absolute; visibility:hidden; }
+button{ font-size:15px; margin:4px 6px 4px 0; padding:8px 12px; }
+pre{ white-space:pre-wrap; }
+</style></head><body>
+<div id="pad"></div>
+<h3>Cairn lab</h3>
+<div><button onclick="setH(0)">Short page</button><button onclick="setH(1500)">Long page</button><button onclick="location.reload()">Reload</button></div>
+<pre id="out"></pre>
+<div id="probe"></div>
+<div class="bar" style="bottom:0;background:#e0a233">A bottom:0</div>
+<div class="bar" style="bottom:-20px;background:#6fa96b">B bottom:-20px</div>
+<div class="bar" style="bottom:-54px;background:#d4665a">C bottom:-54px</div>
+<div class="bar" id="d" style="top:calc(100vh - 16px - 36px);background:#7aa7e0">D top:100vh</div>
+<div class="bar" id="e" style="top:calc(100lvh - 16px - 54px);background:#c08fe0">E top:100lvh</div>
+<div class="bar" id="f" style="top:calc(100svh - 16px - 72px);background:#e0e0e0">F top:100svh</div>
+<div class="bar" id="g" style="top:calc(100dvh - 16px - 90px);background:#e08f8f">G top:100dvh</div>
+<div class="bar" id="h" style="top:calc(100% - 16px - 108px);background:#8fe0d0">H top:100%</div>
+<script>
+function setH(n){ document.getElementById('pad').style.height = n + 'px'; upd(); }
+function upd(){
+  const p = document.getElementById('probe');
+  const m = (css) => { p.style.height = css; return Math.round(p.getBoundingClientRect().height); };
+  const lines = [
+    'inner ' + innerWidth + ' x ' + innerHeight,
+    'screen ' + screen.width + ' x ' + screen.height,
+    'visual ' + (visualViewport ? Math.round(visualViewport.height) : '-'),
+    'scrollY ' + Math.round(scrollY) + ', doc ' + document.documentElement.scrollHeight,
+    '100vh=' + m('100vh') + '  lvh=' + m('100lvh') + '  svh=' + m('100svh') + '  dvh=' + m('100dvh'),
+    'html height 100%: ' + (p.style.height = '100%', document.documentElement.style.height='100%', m('100%')),
+    'standalone ' + (navigator.standalone === true)
+  ];
+  document.getElementById('out').textContent = lines.join('\n') + '\n\nBar colors, bottom to top of screen:\namber A bottom:0 / green B -20 / red C -54 / others use vh units. Tell me which bars you can see and where.';
+}
+upd(); setInterval(upd, 700); addEventListener('scroll', upd, {passive:true});
+</script></body></html>
