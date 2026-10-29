@@ -428,6 +428,17 @@ table.hist th{ text-transform:none; letter-spacing:0; font-size:12px; }
 .notebtn{ align-self:flex-start; color:var(--faint); }
 .notebox textarea{ width:100%; background:var(--surface2); border:none; border-radius:12px; color:var(--fg); padding:10px 12px; font-size:16px; font-family:inherit; resize:vertical; margin-bottom:8px; }
 .notebox textarea:focus{ outline:none; box-shadow:0 0 0 2px var(--accent); }
+.wtbtn{ border:none; font-family:inherit; cursor:pointer; }
+.wtbtn::after{ content:' ›'; opacity:.7; }
+.pl{ border-radius:3px; display:flex; align-items:center; justify-content:center; margin-right:2px; }
+.pl span{ font-size:10px; font-weight:700; color:#14120F; writing-mode:vertical-rl; transform:rotate(180deg); }
+.platebar{ display:flex; align-items:center; justify-content:center; margin:12px 0 4px; }
+.platebar .sleeve{ height:10px; background:#8C867A; border-radius:2px; width:40px; } .platebar .shaft{ height:6px; width:26px; background:#6E6A61; }
+.pstack{ display:flex; align-items:center; }
+.plist{ display:flex; flex-direction:column; gap:8px; }
+.prow{ display:flex; justify-content:space-between; align-items:baseline; font-size:17px; }
+.prow b{ font-family:'Big Shoulders',system-ui,sans-serif; font-size:26px; font-weight:700; }
+.plhead{ display:flex; justify-content:space-between; align-items:center; }
 .statrow{ grid-template-columns:1.35fr 1fr 1fr; }
 .stat .sv{ font-size:26px; }
 .setline .exname{ font-family:'Archivo',system-ui,sans-serif; font-size:16px; font-weight:600; text-transform:none; letter-spacing:0; }
@@ -884,7 +895,7 @@ function renderDay(){
     const tw = targetWeight(item);
     const chips = [];
     if (item.raw) chips.push(`<span class="chip">${esc(item.raw)}</span>`);
-    if (tw != null) chips.push(`<span class="chip wt tabular">${tw} lb</span>`);
+    if (tw != null) chips.push(item.lift ? `<button class="chip wt tabular wtbtn" data-plates="${tw}" aria-label="Plates for ${tw} pounds">${tw} lb</button>` : `<span class="chip wt tabular">${tw} lb</span>`);
     if (item.rec) chips.push(`<span class="chip rec">rec ${item.rec.from}&rarr;${item.rec.to} sets</span>`);
     if (tw != null && recScale()<1 && item.pct!=null) chips.push(`<span class="chip rec">&minus;10%</span>`);
     if (item.rpe) chips.push(`<span class="chip">RPE ${esc(item.rpe)}</span>`);
@@ -1561,7 +1572,7 @@ function dateStrAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.g
 function offlineNote(){ return `<div class="offlineflag">Not connected. Entries here will not be saved.</div>`; }
 
 /* ---- settings (per-viewer, stored locally) ---- */
-let settings = { timer:true, sound:true, units:'imperial', theme:'system', accent:'amber' };
+let settings = { timer:true, sound:true, units:'imperial', theme:'system', accent:'amber', bar:45, plates:[45,35,25,10,5,2.5] };
 try{ const s = JSON.parse(localStorage.getItem('cairn_settings')||'null'); if (s) settings = Object.assign(settings, s); }catch(e){}
 const ACCENTS = {
   amber:{ n:'Amber' },
@@ -1951,6 +1962,54 @@ function openRecap(){
     if (view==='today') renderDay();
   };
 }
+
+/* ---- plate math: tap a barbell weight to see what to load ---- */
+const ALL_PLATES = [100,55,45,35,25,15,10,5,2.5,1.25];
+const PLATE_COLOR = { 100:'#B3382C', 55:'#B3382C', 45:'#E0A233', 35:'#6FA3E0', 25:'#6FA96B', 15:'#C9C2B2', 10:'#9C9588', 5:'#8A8478', 2.5:'#756F64', 1.25:'#6E6A61' };
+function platesFor(total){
+  const bar = Number(settings.bar) || 45;
+  const avail = (settings.plates || []).map(Number).sort((a,b) => b-a);
+  let side = (total - bar) / 2;
+  if (side < 0) return { bar, empty:true, list:[], per:0, off:0 };
+  const list = []; let rem = side;
+  avail.forEach(p => { const n = Math.floor((rem + 1e-9) / p); if (n > 0){ list.push([p, n]); rem -= n*p; } });
+  const loaded = bar + 2*(side - rem);
+  return { bar, list, per:side - rem, off: Math.round((total - loaded)*100)/100, loaded };
+}
+function platesSheet(total, choices){
+  const r = platesFor(total);
+  const bar = r.bar;
+  const viz = r.list.flatMap(([p,n]) => Array.from({length:n}, () => p)).map(p => {
+    const h = Math.round(34 + Math.min(p,45)/45*62), w = p >= 25 ? 16 : p >= 10 ? 12 : 8;
+    return `<div class="pl" style="width:${w}px;height:${h}px;background:${PLATE_COLOR[p]||'#888'}"><span>${p}</span></div>`;
+  }).join('');
+  const rows = r.list.map(([p,n]) => `<div class="prow"><span>${p} lb plate</span><b>${n} each side</b></div>`).join('');
+  const body = r.empty ? `<div class="notes">That is lighter than the ${bar} lb bar.</div>`
+    : `<div class="platebar"><div class="sleeve" style="width:16px"></div><div class="shaft"></div><div class="pstack">${viz}</div><div class="sleeve"></div></div>
+       <div class="plist">${rows || '<div class="notes">Just the bar.</div>'}</div>
+       <div class="notes">${r.off ? `Closest you can load with your plates is ${r.loaded} lb (${Math.abs(r.off)} lb ${r.off>0?'short':'over'}). ` : ''}${r.per} lb per side, ${bar} lb bar.</div>`;
+  const chips = choices.length > 1 ? `<div class="rareas">${choices.map(c => `<button class="mpick ${c===total?'on':''}" data-pw="${c}">${c}</button>`).join('')}</div>` : '';
+  return `<div class="plhead"><h2 style="font-size:26px;">Load ${total} lb</h2><button class="ghostbtn" id="plClose">Close</button></div>${body}${chips}`;
+}
+function openPlates(total, choices){
+  openSheet(platesSheet(total, choices));
+  const wire = () => {
+    const c = document.getElementById('plClose'); if (c) c.onclick = closeSheet;
+    document.querySelectorAll('[data-pw]').forEach(b => b.onclick = () => { const el = document.getElementById('sheet').querySelector('.sheetin'); el.innerHTML = platesSheet(Number(b.dataset.pw), choices); wire(); });
+  };
+  wire();
+}
+document.addEventListener('click', (e) => {
+  const b = e.target.closest && e.target.closest('[data-plates]'); if (!b) return;
+  const card = b.closest('.card'); const tw = Number(b.dataset.plates);
+  const set = new Set([tw]);
+  const fam = card ? (card.querySelector('.exname')||{textContent:''}).textContent.trim().split(/\s+/)[0].toLowerCase() : '';
+  document.querySelectorAll('#main .card').forEach(c => {
+    if (c !== card && (!fam || ((c.querySelector('.exname')||{textContent:''}).textContent.trim().split(/\s+/)[0].toLowerCase() !== fam))) return;
+    c.querySelectorAll('.setrow input[data-field="w"]').forEach(i => { const v = Number(i.value || i.placeholder); if (v > 0) set.add(v); });
+  });
+  openPlates(tw, [...set].sort((a,b) => a-b));
+});
 
 /* ---- personal notes per exercise (shown every time that exercise appears) ---- */
 let exNotes = {}, exNoteEditing = null;
@@ -3319,6 +3378,13 @@ function renderSettings(){
       <div class="rareas" id="themePick">${[['system','System'],['light','Light'],['dark','Dark']].map(([k,l]) => `<button class="mpick ${settings.theme===k?'on':''}" data-theme-pick="${k}">${l}</button>`).join('')}</div>
     </div>
     <div class="card">
+      <div class="exname">Barbell</div>
+      <div class="notes">Used for the plate sheet when you tap a weight on a lift.</div>
+      <div class="rareas" id="barPick">${[35,45,55].map(b => `<button class="mpick ${Number(settings.bar)===b?'on':''}" data-bar="${b}">${b} lb bar</button>`).join('')}</div>
+      <div class="notes">Plates you have</div>
+      <div class="rareas" id="platePick">${ALL_PLATES.slice().reverse().map(p => `<button class="mpick ${(settings.plates||[]).includes(p)?'on':''}" data-plate="${p}">${p}</button>`).join('')}</div>
+    </div>
+    <div class="card">
       <div class="exname">Units</div>
       <div class="notes">Distances in plans and logging. Lifting weights are in lb for now.</div>
       <div class="rareas" id="unitPick"><button class="mpick ${isMetric()?'':'on'}" data-unit="imperial">Miles</button><button class="mpick ${isMetric()?'on':''}" data-unit="metric">Kilometers</button></div>
@@ -3352,6 +3418,15 @@ function renderSettings(){
   document.querySelectorAll('[data-theme-pick]').forEach(b => b.onclick = () => {
     settings.theme = b.dataset.themePick; saveSettings(); applyTheme();
     document.querySelectorAll('[data-theme-pick]').forEach(x => x.classList.toggle('on', x === b));
+  });
+  document.querySelectorAll('[data-bar]').forEach(b => b.onclick = () => {
+    settings.bar = Number(b.dataset.bar); saveSettings();
+    document.querySelectorAll('[data-bar]').forEach(x => x.classList.toggle('on', x === b));
+  });
+  document.querySelectorAll('[data-plate]').forEach(b => b.onclick = () => {
+    const p = Number(b.dataset.plate), cur = new Set((settings.plates||[]).map(Number));
+    if (cur.has(p)) cur.delete(p); else cur.add(p);
+    settings.plates = [...cur].sort((a,b) => b-a); saveSettings(); b.classList.toggle('on', cur.has(p));
   });
   document.querySelectorAll('[data-unit]').forEach(b => b.onclick = () => {
     settings.units = b.dataset.unit; saveSettings();
