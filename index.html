@@ -1179,7 +1179,7 @@ async function commitRow(row, itemKey, setIdx){
   sets[setIdx] = readRowValues(row);
   const body = Object.assign({}, cur, { sets, updatedAt: new Date().toISOString() });
   logDoc[itemKey] = body;
-  try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); }
+  try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); pushSmartSyncSoon(); }
   catch(e){ console.warn('save failed', e); }
 }
 async function saveCheckItem(itemKey, done){
@@ -1189,7 +1189,7 @@ async function saveCheckItem(itemKey, done){
   if (!item) return;
   const body = { itemKey, date:w.date, week:w.week, day:w.day, exercise:item.ex, done, updatedAt: new Date().toISOString() };
   logDoc[itemKey] = body;
-  try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); }
+  try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); pushSmartSyncSoon(); }
   catch(e){ console.warn('save failed', e); }
 }
 function scheduleCardioSave(row, itemKey){
@@ -1212,7 +1212,7 @@ async function commitCardio(row, itemKey){
     updatedAt: new Date().toISOString()
   };
   logDoc[itemKey] = body;
-  try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); }
+  try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); pushSmartSyncSoon(); }
   catch(e){ console.warn('save failed', e); }
 }
 
@@ -1766,6 +1766,7 @@ function watchDeload(){
   try{
     db.doc('state/deload').onSnapshot(snap => {
       deloadDoc = snap.exists ? snap.data() : null;
+      pushSmartSyncSoon();
       if (view==='today') renderDay();
       else if (view==='progress' && curSub()==='week') renderWeek();
     }, err => console.warn('deload sub error', err));
@@ -2093,7 +2094,7 @@ function wireToday(){
 /* ================= PUSH (locked-screen alerts via the Cloudflare worker) ================= */
 const PUSH_URL = 'https://cairn.jakebentley0330.workers.dev';   /* set to your worker address, e.g. https://cairn-push.NAME.workers.dev */
 const VAPID_PUB = 'BCNEidd2FCukumAkMttmdGOTbm_VTimoUbJecCr1iuLGpz2G5_0cWw9_CQAU1pLKkuSQ7eJTr86EWLlBiOAW8xY';
-const pushPrefs = () => Object.assign({ rest:true, morning:false, morningTime:'06:30', weekly:false, weeklyTime:'19:00' }, (settings.push||{}));
+const pushPrefs = () => Object.assign({ rest:true, morning:false, morningTime:'06:30', weekly:false, weeklyTime:'19:00', nudge:false, nudgeTime:'18:30', deloadNote:false }, (settings.push||{}));
 function pushSupported(){ return !!(PUSH_URL && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window); }
 async function pushCall(path, body){
   const tok = window.cairnToken ? await window.cairnToken() : null;
@@ -2135,6 +2136,52 @@ async function pushRestSchedule(){
 async function pushRestCancel(){
   if (!pushRestOn()) return;
   try{ const sub = await pushSub(false); if (sub) await pushCall('/cancel', { endpoint: sub.endpoint, id:'rest' }); }catch(e){}
+}
+
+/* Missed-workout nudge and deload heads-up. Both are optional and off by default.
+   The app tells the server what to send and when; each sync replaces earlier jobs with the same id.
+   Logging a workout, skipping the day, or turning the option off cancels the nudge. */
+const localAt = (ds, hhmm) => { const [y,m,d] = ds.split('-').map(Number), [h,mi] = String(hhmm||'18:30').split(':').map(Number); return new Date(y, m-1, d, h||0, mi||0).getTime(); };
+function plannedOn(ds){
+  const w = WORKOUTS.find(x => x.date === ds); if (!w) return null;
+  const items = (w.planHide ? w.items.filter(it => it.plan) : w.items).filter(it => !isWarm(it.ex) && !/mobility/i.test(it.ex));
+  return items.length ? w : null;
+}
+function nextDeloadStart(from){
+  const starts = [];
+  const seenWeeks = new Set();
+  WORKOUTS.forEach(w => { if (!w.synthetic && w.phase === 'Deload' && w.date >= from && !seenWeeks.has(w.week)){ seenWeeks.add(w.week); starts.push(w.date); } });
+  planRuns.filter(r => r.active !== false).forEach(r => { const first = {}; (r.sessions||[]).forEach(s => { if (s.week % 4 === 0 && !first[s.week]) first[s.week] = s.date; }); Object.values(first).forEach(d => { if (d >= from) starts.push(d); }); });
+  if (deloadDoc && deloadDoc.active !== false && deloadDoc.from >= from) starts.push(deloadDoc.from);
+  starts.sort(); return starts[0] || null;
+}
+let pushSyncT = null;
+function pushSmartSyncSoon(){ clearTimeout(pushSyncT); pushSyncT = setTimeout(pushSmartSync, 3000); }
+async function pushSmartSync(){
+  if (!pushSupported() || !(settings.push && settings.push.on) || typeof Notification === 'undefined' || Notification.permission !== 'granted' || offline || !db) return;
+  const p = pushPrefs();
+  let sub; try{ sub = await pushSub(false); }catch(e){ return; }
+  if (!sub) return;
+  const send = (path, body) => pushCall(path, Object.assign({ endpoint: sub.endpoint }, body)).catch(() => {});
+  const today = todayStr(), now = Date.now();
+  let loggedToday = false;
+  try{
+    const snap = await db.collection('logs').where('date','==',today).get();
+    loggedToday = snap.docs.some(d => { const x = d.data() || {}; return x.done || x.time != null || (x.sets || []).some(s => s && (s.done || s.w != null)); });
+  }catch(e){}
+  for (let i=0; i<3; i++){
+    const ds = addDaysStr(today, i), id = 'nudge-' + ds, w = plannedOn(ds);
+    const at = localAt(ds, p.nudgeTime);
+    const skip = !!skipsMap[ds] || (i === 0 && loggedToday);
+    if (p.nudge && w && !skip && at > now + 60000) await send('/schedule', { id, at, title:'Training today?', body: (w.focus || 'Workout') + ' is not logged yet. Skip it in the app if today is off.', tag:'nudge' });
+    else await send('/cancel', { id });
+  }
+  const start = nextDeloadStart(addDaysStr(today, 1));
+  if (start){
+    const ds = addDaysStr(start, -1), id = 'deload-' + start, at = localAt(ds, p.weeklyTime);
+    if (p.deloadNote && at > now + 60000) await send('/schedule', { id, at, title:'Deload week starts tomorrow', body:'Lighter week ahead. Stay on the plan, keep the weights easy and let recovery catch up.', tag:'deload' });
+    else await send('/cancel', { id });
+  }
 }
 
 /* ================= REST TIMER ================= */
@@ -2733,7 +2780,7 @@ function watchSkips(){
   try{
     db.collection('skips').limit(400).onSnapshot(snap => {
       skipsMap = {};
-      snap.docs.forEach(d => { const x = d.data(); if (x && x.date) skipsMap[x.date] = x; });
+      snap.docs.forEach(d => { const x = d.data(); if (x && x.date) skipsMap[x.date] = x; }); pushSmartSyncSoon();
       if (view==='today') renderDay();
       else if (view==='progress' && curSub()==='skips') drawSkips();
     }, err => console.warn('skips sub error', err));
@@ -3342,6 +3389,7 @@ function watchPlanRuns(){
     db.collection('planRuns').limit(30).onSnapshot(snap => {
       planRuns = snap.docs.map(d => d.data()).filter(Boolean);
       applyPlanRuns();
+      pushSmartSyncSoon();
       watchDayLogs(); watchDayEdit();
       if (view==='today') renderDay();
       else if (view==='plan' && curSub()==='plans') drawPlans();
@@ -3869,6 +3917,9 @@ function drawPushCard(){
     <div class="setline"><div class="notes">Morning time</div><input type="time" id="pushMornT" value="${p.morningTime}" class="tinput"></div>
     ${row('pushWeek', 'Sunday review', 'A weekly summary reminder.', p.weekly)}
     <div class="setline"><div class="notes">Sunday time</div><input type="time" id="pushWeekT" value="${p.weeklyTime}" class="tinput"></div>
+    ${row('pushNudge', 'Missed-workout nudge', 'Evening reminder on a planned day with nothing logged. Logging or skipping cancels it.', p.nudge)}
+    <div class="setline"><div class="notes">Nudge time</div><input type="time" id="pushNudgeT" value="${p.nudgeTime}" class="tinput"></div>
+    ${row('pushDeload', 'Deload heads-up', 'The evening before a deload week starts (uses the Sunday time).', p.deloadNote)}
     <button class="ghostbtn" id="pushTest" style="align-self:flex-start;">Send a test notification</button>
     <div class="notes" id="pushMsg"></div>` : '<div class="notes" id="pushMsg"></div>');
   const msg = (s) => { const m = document.getElementById('pushMsg'); if (m) m.textContent = s; };
@@ -3881,8 +3932,11 @@ function drawPushCard(){
   document.getElementById('pushRest').onclick = () => { set('rest', !p.rest); drawPushCard(); };
   document.getElementById('pushMorn').onclick = () => { set('morning', !p.morning); drawPushCard(); };
   document.getElementById('pushWeek').onclick = () => { set('weekly', !p.weekly); drawPushCard(); };
+  document.getElementById('pushNudge').onclick = () => { set('nudge', !p.nudge); drawPushCard(); pushSmartSync(); };
+  document.getElementById('pushNudgeT').onchange = (e) => { set('nudgeTime', e.target.value || '18:30'); pushSmartSync(); };
+  document.getElementById('pushDeload').onclick = () => { set('deloadNote', !p.deloadNote); drawPushCard(); pushSmartSync(); };
   document.getElementById('pushMornT').onchange = (e) => set('morningTime', e.target.value || '06:30');
-  document.getElementById('pushWeekT').onchange = (e) => set('weeklyTime', e.target.value || '19:00');
+  document.getElementById('pushWeekT').onchange = (e) => { set('weeklyTime', e.target.value || '19:00'); pushSmartSync(); };
   document.getElementById('pushTest').onclick = async () => {
     try{ const sub = await pushSub(false); if (!sub) throw new Error('No subscription. Turn notifications off and on again.'); const r = await pushCall('/test', { endpoint: sub.endpoint }); msg(r.ok ? 'Sent. It should arrive in a few seconds.' : 'Apple rejected it (' + r.status + ').'); }
     catch(e){ msg(e.message || 'Failed'); }
