@@ -300,6 +300,8 @@ body.restshown main{ padding-bottom:150px; }
 .finishbtn{ width:100%; flex:none; }
 .sheet{ position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.55); display:flex; align-items:flex-end; justify-content:center; }
 .sheetin{ background:var(--bg); border-top:1px solid var(--line); border-radius:16px 16px 0 0; width:100%; max-width:560px; max-height:88vh; overflow:auto; padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px)); display:flex; flex-direction:column; gap:14px; color:var(--fg); }
+#stList,#skList,#flList{ display:flex; flex-direction:column; gap:8px; }
+.skipcard{ border-color:var(--warn); }
 .statrow{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
 .stat{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:10px 12px; min-width:0; }
 .stat .sv{ font-family:'Big Shoulders', system-ui, sans-serif; font-weight:700; font-size:24px; line-height:1.1; }
@@ -510,6 +512,7 @@ async function init(){
   watchDayLogs();
   watchDayEdit();
   watchReady();
+  watchSkips();
   loadReadyWeek();
   loadBench();
   loadPriorPerf();
@@ -745,6 +748,7 @@ function renderDay(){
 
   html += readinessHtml();
   html += patternHtml();
+  html += skipBannerHtml();
 
   visible.forEach(item => {
     const isPrimary = /PRIMARY/i.test(item.ex);
@@ -837,6 +841,7 @@ function renderDay(){
   if (editMode) html += addFormHtml();
 
   html += finishBarHtml();
+  html += skipBtnHtml();
   main.innerHTML = html;
   wireDayInputs();
   wireToday();
@@ -1411,7 +1416,7 @@ function renderMaxes(){
 
 /* =================== CAIRN ADDITIONS =================== */
 const SUBS = {
-  progress: [['history','Lifts'],['volume','Volume'],['weight','Weight'],['functional','Functional'],['bench','Tests']],
+  progress: [['history','Lifts'],['volume','Volume'],['weight','Weight'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
   plan: [['maxes','Maxes'],['roadmap','Roadmap'],['settings','Settings']]
 };
@@ -1441,6 +1446,8 @@ function renderSubView(){
   else if (s==='weight') renderWeight();
   else if (s==='functional') renderFunctional();
   else if (s==='bench') renderBenchSection();
+  else if (s==='sticking') renderSticking();
+  else if (s==='skips') renderSkips();
   else if (s==='readiness') renderReadinessHist();
   else if (s==='flares') renderFlares();
   else if (s==='flareplan') mainEl().innerHTML = planFlareHtml();
@@ -1767,6 +1774,8 @@ function wireToday(){
   const pd = document.getElementById('patDismiss'); if (pd) pd.onclick = () => { try{ localStorage.setItem('cairn_pat', todayStr()); }catch(e){} renderDay(); };
   const fp = document.getElementById('readyFlare'); if (fp) fp.onclick = () => { subs.body = 'flareplan'; setView('body'); };
   const fb = document.getElementById('finishBtn'); if (fb) fb.onclick = openRecap;
+  const sb = document.getElementById('skipBtn'); if (sb) sb.onclick = openSkipSheet;
+  const su = document.getElementById('skipUndo'); if (su) su.onclick = undoSkip;
 }
 
 /* ================= REST TIMER ================= */
@@ -2207,10 +2216,12 @@ function drawFlares(){
       <div class="chips">${Object.entries(byArea).sort((a,b) => b[1]-a[1]).map(([k,n]) => `<span class="chip">${esc(k)} · ${n}</span>`).join('')}</div>
       <div class="notes">Most common trigger: ${esc(top(byWhen)[0])}.</div></div>`;
   } else sum.innerHTML = '';
+  sum.innerHTML += flarePatternsHtml();
   list.innerHTML = flareRows.slice(0,25).map(r => `
     <div class="card" style="padding:10px 14px;">
       <div class="exhead"><div class="exname">${esc(r.area)} · ${r.severity}/5</div><button class="ghostbtn" data-delfl="${esc(r._id)}" aria-label="Delete entry">&times;</button></div>
       <div class="notes">${fmtDate(r.date)} · during ${esc(r.when||'-')}${r.notes ? ' · '+esc(r.notes) : ''}</div>
+      ${flareCtxLine(r)}
     </div>`).join('') || `<div class="notes">No flare-ups logged. Good.</div>`;
   list.querySelectorAll('[data-delfl]').forEach(b => b.onclick = async () => {
     try{ await db.collection('flares').doc(b.dataset.delfl).delete(); }catch(e){ console.warn(e); }
@@ -2221,6 +2232,7 @@ function drawFlares(){
 async function saveFlare(){
   const body = { date: todayStr(), area: flArea, severity: flSev, when: document.getElementById('flWhen').value, createdAt: new Date().toISOString() };
   const n = document.getElementById('flNotes').value.trim(); if (n) body.notes = n;
+  try{ body.context = await flareContext(); }catch(e){ console.warn('flare context failed', e); }
   const id = body.date+'__'+Date.now().toString(36);
   try{ await db.collection('flares').doc(id).set(body); }catch(e){ console.warn('save flare failed', e); return; }
   flareRows = [Object.assign({ _id:id }, body)].concat(flareRows);
@@ -2228,8 +2240,235 @@ async function saveFlare(){
   drawFlares();
 }
 
+
+/* ================= SKIPPED DAYS ================= */
+const SKIP_REASONS = ['Work','Sick','Flare-up','Travel','Low energy','Social event','Family','Busy / no time','Weather','Gym closed','Mental break','Other'];
+let skipsMap = {}, skipReason = null;
+function watchSkips(){
+  if (!db) return;
+  try{
+    db.collection('skips').limit(400).onSnapshot(snap => {
+      skipsMap = {};
+      snap.docs.forEach(d => { const x = d.data(); if (x && x.date) skipsMap[x.date] = x; });
+      if (view==='today') renderDay();
+      else if (view==='progress' && curSub()==='skips') drawSkips();
+    }, err => console.warn('skips sub error', err));
+  }catch(e){ console.warn(e); }
+}
+function skipBannerHtml(){
+  const s = skipsMap[WORKOUTS[curIdx].date];
+  if (!s) return '';
+  return `<div class="card skipcard"><div class="exhead"><div class="exname">Skipped · ${esc(s.reason||'')}</div><button class="ghostbtn" id="skipUndo">Undo</button></div>${s.note ? `<div class="notes">${esc(s.note)}</div>` : ''}</div>`;
+}
+function skipBtnHtml(){
+  if (offline) return '';
+  if (skipsMap[WORKOUTS[curIdx].date]) return '';
+  return `<div style="display:flex;justify-content:center;padding:6px 0 14px;"><button class="ghostbtn" id="skipBtn">Skip this day</button></div>`;
+}
+function openSkipSheet(){
+  skipReason = null;
+  openSheet(`
+    <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">Skip ${esc(WORKOUTS[curIdx].day)}?</h2><div class="notes">Pick the main reason. It gets logged so the pattern shows up later.</div></div>
+    <div class="rareas" id="skReasons">${SKIP_REASONS.map(r => `<button class="mpick" data-skr="${esc(r)}">${esc(r)}</button>`).join('')}</div>
+    <div class="bfield"><label for="skNote">Note (optional)</label><input id="skNote" type="text" placeholder="e.g. client dinner ran late"></div>
+    <button class="savebtn" id="skSave" disabled>Mark as skipped</button>
+    <button class="ghostbtn" id="skCancel">Cancel</button>`);
+  const reasons = document.querySelectorAll('#skReasons .mpick');
+  reasons.forEach(b => b.onclick = () => { skipReason = b.dataset.skr; reasons.forEach(x => x.classList.toggle('on', x===b)); document.getElementById('skSave').disabled = false; });
+  document.getElementById('skCancel').onclick = closeSheet;
+  document.getElementById('skSave').onclick = saveSkip;
+}
+async function saveSkip(){
+  if (!skipReason || !db) return;
+  const w = WORKOUTS[curIdx];
+  const body = { date: w.date, reason: skipReason, week: w.week, day: w.day, focus: w.focus, createdAt: new Date().toISOString() };
+  const n = document.getElementById('skNote').value.trim(); if (n) body.note = n;
+  try{ await db.doc('skips/'+w.date).set(body); }catch(e){ console.warn('skip save failed', e); return; }
+  skipsMap[w.date] = body;
+  closeSheet();
+  renderDay();
+}
+async function undoSkip(){
+  const w = WORKOUTS[curIdx];
+  try{ await db.doc('skips/'+w.date).delete(); }catch(e){ console.warn(e); return; }
+  delete skipsMap[w.date];
+  renderDay();
+}
+function renderSkips(){
+  const main = mainEl();
+  if (offline || !db){ main.innerHTML = offlineNote(); return; }
+  main.innerHTML = `<div class="notes">Days you marked as skipped, and why. Use Skip this day at the bottom of any workout.</div><div id="skStats"></div><div id="skList"></div>`;
+  drawSkips();
+}
+function drawSkips(){
+  if (curSub()!=='skips' || view!=='progress') return;
+  const stats = document.getElementById('skStats'), list = document.getElementById('skList');
+  if (!stats || !list) return;
+  const today = todayStr();
+  const rows = Object.values(skipsMap).sort((a,b) => b.date.localeCompare(a.date));
+  const planned = WORKOUTS.filter(w => w.date <= today && w.items.some(it => it.sets!=null)).length;
+  const past = rows.filter(r => r.date <= today);
+  const last28 = past.filter(r => r.date >= dateStrAgo(27)).length;
+  if (!rows.length){ stats.innerHTML = ''; list.innerHTML = '<div class="notes">Nothing skipped. Nice.</div>'; return; }
+  const by = (key) => { const o = {}; past.forEach(r => { const k = r[key] || 'Other'; o[k] = (o[k]||0)+1; }); return Object.entries(o).sort((a,b) => b[1]-a[1]); };
+  const reasons = by('reason'), days = by('day');
+  const max = Math.max(1, reasons[0] ? reasons[0][1] : 1);
+  const bar = (k,n,mx) => `<div class="mbar"><div>${esc(k)}</div><div style="background:var(--surface2);border-radius:6px;height:10px;"><div style="width:${Math.round(n/mx*100)}%;height:10px;border-radius:6px;background:var(--accent);"></div></div><div class="tabular">${n}</div></div>`;
+  let insight = '';
+  if (past.length>=3){
+    const [r0,n0] = reasons[0], [d0,m0] = days[0];
+    insight = `${n0} of ${past.length} skips were for "${r0}".` + (m0>=3 && m0/past.length>=0.4 ? ` ${d0} is the day that gets skipped most (${m0}).` : '');
+  }
+  stats.innerHTML = `
+    <div class="statrow">
+      <div class="stat"><div class="sv tabular">${past.length}</div><div class="sl">Skipped</div></div>
+      <div class="stat"><div class="sv tabular">${planned ? Math.round(past.length/planned*100)+'%' : '-'}</div><div class="sl">Of ${planned} planned</div></div>
+      <div class="stat"><div class="sv tabular">${last28}</div><div class="sl">Last 4 weeks</div></div>
+    </div>
+    ${insight ? `<div class="notes">${esc(insight)}</div>` : ''}
+    <div class="card"><div class="exname">Why</div>${reasons.map(([k,n]) => bar(k,n,max)).join('')}</div>
+    <div class="card"><div class="exname">Which day</div>${days.map(([k,n]) => bar(k,n,max)).join('')}</div>`;
+  list.innerHTML = rows.slice(0,40).map(r => `
+    <div class="card" style="padding:10px 14px;">
+      <div class="exhead"><div class="exname">${esc(r.reason)} · ${esc(r.day||'')} wk ${r.week||'-'}</div><button class="ghostbtn" data-delsk="${esc(r.date)}" aria-label="Remove skip">&times;</button></div>
+      <div class="notes">${fmtDate(r.date)}${r.focus ? ' · '+esc(r.focus) : ''}${r.note ? ' · '+esc(r.note) : ''}</div>
+    </div>`).join('');
+  list.querySelectorAll('[data-delsk]').forEach(b => b.onclick = async () => {
+    try{ await db.doc('skips/'+b.dataset.delsk).delete(); }catch(e){ console.warn(e); }
+    delete skipsMap[b.dataset.delsk]; drawSkips();
+  });
+}
+
+/* ================= BENCH STICKING POINT ================= */
+const STICK_RE = /spoto|pin press|board press/i;
+let stickRows = [], stickHeights = {}, stickBench = [];
+async function renderSticking(){
+  const main = mainEl();
+  if (offline || !db){ main.innerHTML = offlineNote(); return; }
+  main.innerHTML = `
+    <div class="notes">Your stall is 1 to 3 inches off the chest. Spoto presses train that range. After each Spoto session, tag the gap where it got sticky, and watch whether the weight there climbs.</div>
+    <div class="statrow" id="stStats"></div>
+    <div class="chartbox"><canvas id="stCanvas" width="600" height="170" style="height:170px"></canvas><div class="tooltip" id="stTip"></div><div class="chartempty" id="stEmpty" hidden>Log a couple of Spoto sessions to see the trend.</div></div>
+    <div id="stNote"></div>
+    <div id="stList"></div>`;
+  try{
+    const snap = await db.collection('logs').orderBy('date','desc').limit(500).get();
+    const per = {}; stickBench = []; const benchBy = {};
+    snap.docs.forEach(d => {
+      const x = d.data(); if (!x || !x.exercise || !Array.isArray(x.sets)) return;
+      const done = x.sets.filter(s => s && s.done && Number(s.w)>0 && Number(s.r)>0);
+      if (!done.length) return;
+      const best = done.reduce((a,s) => (Number(s.w) > Number(a.w) || (Number(s.w)===Number(a.w) && Number(s.r)>Number(a.r))) ? s : a);
+      if (STICK_RE.test(x.exercise)){
+        const k = x.date; if (!per[k] || Number(best.w) > per[k].w) per[k] = { date:x.date, ex:x.exercise, w:Number(best.w), r:Number(best.r), sets:done.length };
+      } else if (/^Bench Press \(PRIMARY\)/.test(x.exercise)){
+        benchBy[x.date] = Number(best.w);
+      }
+    });
+    stickRows = Object.values(per).sort((a,b) => a.date.localeCompare(b.date));
+    stickBench = Object.entries(benchBy).sort((a,b) => a[0].localeCompare(b[0])).map(([date,w]) => ({date, w}));
+    const hs = await db.collection('sticking').limit(200).get();
+    stickHeights = {}; hs.docs.forEach(d => { const x = d.data(); if (x && x.date) stickHeights[x.date] = x.height; });
+  }catch(e){ console.warn('sticking load failed', e); stickRows = []; }
+  drawSticking();
+}
+function drawSticking(){
+  if (curSub()!=='sticking' || view!=='progress') return;
+  const stats = document.getElementById('stStats'); if (!stats) return;
+  const canvas = document.getElementById('stCanvas'), empty = document.getElementById('stEmpty'), tip = document.getElementById('stTip');
+  const rows = stickRows;
+  if (!rows.length){
+    stats.innerHTML = ''; canvas.style.display = 'none'; empty.hidden = false; empty.style.position='static';
+    document.getElementById('stList').innerHTML = '';
+    document.getElementById('stNote').innerHTML = '<div class="notes">Nothing logged yet. The Friday Spoto press shows up here once you check off sets.</div>';
+    return;
+  }
+  const first = rows[0], last = rows[rows.length-1];
+  const bestW = Math.max(...rows.map(r => r.w));
+  const chg = last.w - first.w;
+  stats.innerHTML = `
+    <div class="stat"><div class="sv tabular">${last.w}</div><div class="sl">Latest top set</div></div>
+    <div class="stat"><div class="sv tabular">${bestW}</div><div class="sl">Best</div></div>
+    <div class="stat"><div class="sv tabular">${rows.length>1 ? (chg>0?'+':'')+chg : '-'}</div><div class="sl">Since first</div></div>`;
+  if (rows.length>=2){ canvas.style.display='block'; empty.hidden = true; drawLine(canvas, tip, [{ points: rows.map(r => ({date:r.date, v:r.w})), dots:true, line:true }]); }
+  else { canvas.style.display='none'; empty.hidden = false; empty.style.position='static'; }
+  // by height
+  const byH = {};
+  rows.forEach(r => { const h = stickHeights[r.date]; if (!h) return; if (!byH[h] || r.w > byH[h].w) byH[h] = r; });
+  const hl = Object.keys(byH).sort().map(h => `At ${h} in: ${byH[h].w}×${byH[h].r} (${fmtDate(byH[h].date)})`);
+  const tm = maxes.bench ? Math.round(last.w / maxes.bench * 100) : null;
+  document.getElementById('stNote').innerHTML = `<div class="card"><div class="exname">Where it stands</div>
+    <div class="notes">${tm!=null ? `Latest Spoto top set is ${tm}% of your bench max (${maxes.bench}). ` : ''}${hl.length ? esc(hl.join(' · ')) : 'Tag the gap on each session below to see the best weight at each height.'}</div></div>`;
+  const list = document.getElementById('stList');
+  list.innerHTML = rows.slice().reverse().slice(0,20).map(r => `
+    <div class="card" style="padding:10px 14px;">
+      <div class="exhead"><div class="exname">${esc(r.ex)} · ${r.w}×${r.r}</div></div>
+      <div class="notes">${fmtDate(r.date)} · ${r.sets} sets</div>
+      <div class="jlabel">Where it got sticky</div>
+      <div class="rareas">${[1,2,3].map(h => `<button class="mpick ${stickHeights[r.date]===h?'on':''}" data-sth="${r.date}|${h}">${h} in</button>`).join('')}</div>
+    </div>`).join('');
+  list.querySelectorAll('[data-sth]').forEach(b => b.onclick = async () => {
+    const [date,h] = b.dataset.sth.split('|'); const val = Number(h);
+    const next = stickHeights[date]===val ? null : val;
+    try{ if (next==null) await db.doc('sticking/'+date).delete(); else await db.doc('sticking/'+date).set({ date, height: next, updatedAt: new Date().toISOString() }); }catch(e){ console.warn(e); return; }
+    if (next==null) delete stickHeights[date]; else stickHeights[date] = next;
+    drawSticking();
+  });
+}
+
+/* ================= FLARE CONTEXT ================= */
+function liftFamily(ex){
+  if (/squat|leg press|lunge|split/i.test(ex)) return 'Squat';
+  if (/deadlift|rdl|romanian|good ?morning|trap bar/i.test(ex)) return 'Deadlift';
+  if (/bench|press|spoto|ohp|dip|push/i.test(ex)) return 'Pressing';
+  if (/jump|bound|plyo|hop/i.test(ex)) return 'Jumps';
+  if (/pull|row|curl|lat /i.test(ex)) return 'Pulling';
+  return null;
+}
+async function flareContext(){
+  const ctx = { lifts: [] };
+  const snap = await db.collection('logs').where('date','>=',dateStrAgo(2)).get();
+  snap.docs.forEach(d => {
+    const x = d.data(); if (!x || !x.exercise || isWarm(x.exercise) || !Array.isArray(x.sets)) return;
+    const done = x.sets.filter(s => s && s.done);
+    if (!done.length) return;
+    const top = Math.max(0, ...done.map(s => Number(s.w)||0));
+    ctx.lifts.push({ date:x.date, ex:x.exercise.replace(/\s*\(.*\)/,''), sets:done.length, top, fam: liftFamily(x.exercise) });
+  });
+  ctx.lifts.sort((a,b) => b.date.localeCompare(a.date) || b.top - a.top);
+  ctx.lifts = ctx.lifts.slice(0,12);
+  const rd = (ds) => (ds===todayStr() && readyDoc) ? readyDoc : readyWeek[ds];
+  const r0 = rd(todayStr()), r1 = rd(dateStrAgo(1));
+  ctx.sleepToday = r0 ? r0.sleep || null : null;
+  ctx.sleepPrev = r1 ? r1.sleep || null : null;
+  ctx.level = (r0 && r0.level) || null;
+  return ctx;
+}
+function flareCtxLine(r){
+  const c = r.context; if (!c || !c.lifts || !c.lifts.length) return '';
+  const mains = c.lifts.filter(l => l.fam).slice(0,3);
+  const days = (d) => { const n = Math.round((new Date(r.date+'T12:00:00') - new Date(d+'T12:00:00'))/86400000); return n<=0 ? 'same day' : n===1 ? 'day before' : n+' days before'; };
+  const txt = mains.map(l => `${esc(l.ex)}${l.top ? ' '+l.top : ''} (${l.sets} sets, ${days(l.date)})`).join(', ');
+  return txt ? `<div class="notes">Before this: ${txt}</div>` : '';
+}
+function flarePatternsHtml(){
+  const rows = flareRows.filter(r => r.context && r.context.lifts);
+  if (rows.length < 6) return `<div class="card"><div class="exname">Patterns</div><div class="notes">Needs about 6 flare-ups with context to say anything real. ${rows.length} so far. Each new one records what you lifted in the previous 2 days and how you slept.</div></div>`;
+  const lines = [];
+  const areas = {}; rows.forEach(r => { (areas[r.area] = areas[r.area] || []).push(r); });
+  Object.entries(areas).forEach(([area, rs]) => {
+    if (rs.length < 3) return;
+    const fam = {}; rs.forEach(r => { const s = new Set(r.context.lifts.map(l => l.fam).filter(Boolean)); s.forEach(f => fam[f] = (fam[f]||0)+1); });
+    Object.entries(fam).sort((a,b) => b[1]-a[1]).slice(0,1).forEach(([f,n]) => { if (n>=3 && n/rs.length>=0.6) lines.push(`${area}: ${n} of ${rs.length} flares came within 2 days of ${f.toLowerCase()} work.`); });
+  });
+  const bad = rows.filter(r => r.context.sleepToday==='bad' || r.context.sleepPrev==='bad').length;
+  const known = rows.filter(r => r.context.sleepToday || r.context.sleepPrev).length;
+  if (known>=5 && bad/known>=0.5) lines.push(`${bad} of ${known} flares came after a bad-sleep day.`);
+  return `<div class="card"><div class="exname">Patterns</div>${lines.length ? lines.map(l => `<div class="notes">${esc(l)}</div>`).join('') : '<div class="notes">No clear trigger yet. Keep logging.</div>'}</div>`;
+}
+
 /* ================= PLAN: SETTINGS ================= */
-const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares'];
+const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking'];
 async function exportBackup(){
   const msg = document.getElementById('bkMsg');
   if (!db || offline){ msg.textContent = 'Not connected.'; return; }
