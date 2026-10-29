@@ -1407,7 +1407,9 @@ function renderMaxes(){
       fields.forEach(([k]) => { const v = document.getElementById('max_'+k).value; body[k] = v===''?null:Number(v); });
       body.updatedAt = new Date().toISOString();
       try{
+        const prevM = Object.assign({}, maxes);
         await db.doc('state/maxes').set(body);
+        for (const lf of ['squat','bench','deadlift']){ if (body[lf]!=null && body[lf]!==prevM[lf]){ try{ await db.doc('maxhist/'+todayStr()+'__'+lf).set({ date: todayStr(), lift: lf, value: body[lf], source:'manual' }); }catch(e){} } }
         document.getElementById('savedFlag').hidden = false;
         setTimeout(()=>{ const f=document.getElementById('savedFlag'); if(f) f.hidden = true; }, 2500);
       }catch(e){ console.warn('save maxes failed', e); }
@@ -1417,7 +1419,7 @@ function renderMaxes(){
 
 /* =================== CAIRN ADDITIONS =================== */
 const SUBS = {
-  progress: [['history','Lifts'],['volume','Volume'],['weight','Weight'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
+  progress: [['history','Lifts'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
   plan: [['maxes','Maxes'],['roadmap','Roadmap'],['settings','Settings']]
 };
@@ -1448,6 +1450,7 @@ function renderSubView(){
   else if (s==='functional') renderFunctional();
   else if (s==='bench') renderBenchSection();
   else if (s==='sticking') renderSticking();
+  else if (s==='strength') renderStrength();
   else if (s==='skips') renderSkips();
   else if (s==='readiness') renderReadinessHist();
   else if (s==='flares') renderFlares();
@@ -1748,11 +1751,13 @@ function openRecap(){
       </div>
       <div><div class="jlabel">Muscles worked</div>${muscleMapSvg(r.muscles)}<div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">${bars}</div></div>
     ` : `<div class="notes">No working sets are checked off yet. Tap the check on each set as you finish it and the recap fills in.</div>`}
+    ${progressionHtml()}
     ${r.extras.length ? `<div><div class="jlabel">Also done</div><div class="chips" style="margin-top:6px;">${r.extras.map(x => `<span class="chip">${esc(x)}</span>`).join('')}</div></div>` : ''}
     <div class="addbtnrow">
       <button class="savebtn" id="recapSave">${fin ? 'Update recap' : 'Save workout'}</button>
       <button class="ghostbtn" id="recapClose">${fin ? 'Close' : 'Keep logging'}</button>
     </div>`);
+  wireProgression();
   document.getElementById('recapClose').onclick = closeSheet;
   document.getElementById('recapSave').onclick = async () => {
     const body = { date:w.date, week:w.week, focus:w.focus, muscles:r.muscles, sets:r.sets, vol:r.vol, top:r.top||null, extras:r.extras,
@@ -2468,8 +2473,171 @@ function flarePatternsHtml(){
   return `<div class="card"><div class="exname">Patterns</div>${lines.length ? lines.map(l => `<div class="notes">${esc(l)}</div>`).join('') : '<div class="notes">No clear trigger yet. Keep logging.</div>'}</div>`;
 }
 
+
+/* ================= BATCH 2: PROGRESSION, STRENGTH, GOALS ================= */
+const MAIN_RE = /^(Squat|Bench|Deadlift)( Press)?( \(PRIMARY\)| — attempt)/;
+const LIFT_LABEL = { squat:'Squat', bench:'Bench', deadlift:'Deadlift' };
+function mainLiftOf(ex){ const m = MAIN_RE.exec(ex||''); return m ? m[1].toLowerCase() : null; }
+function epley(w, r){ return r<=1 ? w : w*(1+r/30); }
+function lbl(n){ return Number(n).toLocaleString(); }
+
+/* ---- progression suggestion (shown in the workout recap; suggestion only) ---- */
+function progKey(date, lift){ return 'cairn_prog_' + date + '_' + lift; }
+function progressionSuggestions(){
+  const w = WORKOUTS[curIdx]; const out = [];
+  const { all } = dayItems();
+  all.forEach(it => {
+    if (it.hidden || !it.lift || !/PRIMARY/.test(it.ex) || !it.sets) return;
+    const log = logDoc[it.k]; if (!log || !log.sets) return;
+    const done = log.sets.filter(s => s && s.done && Number(s.r) > 0);
+    if (!done.length) return;
+    const lift = it.lift, name = LIFT_LABEL[lift] || it.ex;
+    const tgtReps = Number(it.reps), tgtRpe = parseFloat(it.rpe);
+    const rpes = done.map(s => Number(s.rpe)).filter(x => isFinite(x) && x > 0);
+    const avg = rpes.length ? rpes.reduce((a,b) => a+b, 0) / rpes.length : null;
+    const hit = done.length >= it.sets && (!isNaN(tgtReps) ? done.every(s => Number(s.r) >= tgtReps) : true);
+    let dismissed = false; try{ dismissed = !!localStorage.getItem(progKey(w.date, lift)); }catch(e){}
+    if (dismissed) return;
+    const cur = maxes[lift];
+    let s = null;
+    if (!hit){
+      s = { kind:'hold', text:`${name}: not all prescribed reps were hit. Repeat this weight before adding anything.` };
+    } else if (avg == null || isNaN(tgtRpe)){
+      s = { kind:'info', text:`${name}: every rep was hit. Log RPE on the main sets and I can say whether to move up.` };
+    } else {
+      const d = avg - tgtRpe;
+      if (d <= -0.5 && cur){
+        const inc = d <= -1.5 ? (lift==='bench' ? 5 : 10) : 5;
+        const nm = Math.min(cur + inc, Math.floor(cur * 1.03 / 5) * 5);
+        if (nm > cur) s = { kind:'up', lift, newMax:nm, text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. That's easier than planned. You could nudge your ${name.toLowerCase()} max from ${cur} to ${nm}.` };
+      }
+      if (!s && d >= 1) s = { kind:'down', text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. Harder than planned. Hold your max, and think about taking a set or 5% off next session.` };
+      if (!s) s = { kind:'ok', text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. Right on plan. Keep the max where it is.` };
+    }
+    s.lift = lift; s.date = w.date; out.push(s);
+  });
+  return out;
+}
+function progressionHtml(){
+  const list = progressionSuggestions();
+  if (!list.length) return '';
+  return `<div><div class="jlabel">Next time</div><div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">${list.map(s => `
+    <div class="card" style="padding:10px 12px;gap:6px;"><div class="notes" style="color:var(--fg);">${esc(s.text)}</div>
+    <div class="rbtns">${s.kind==='up' ? `<button class="ghostbtn" data-progapply="${s.lift}|${s.newMax}">Apply ${s.newMax}</button>` : ''}<button class="ghostbtn" data-progdismiss="${s.lift}">Dismiss</button></div></div>`).join('')}</div></div>`;
+}
+function wireProgression(){
+  const w = WORKOUTS[curIdx];
+  document.querySelectorAll('[data-progdismiss]').forEach(b => b.onclick = () => { try{ localStorage.setItem(progKey(w.date, b.dataset.progdismiss), '1'); }catch(e){} b.closest('.card').remove(); });
+  document.querySelectorAll('[data-progapply]').forEach(b => b.onclick = async () => {
+    const [lift, nm] = b.dataset.progapply.split('|');
+    const body = Object.assign({}, maxes, { [lift]: Number(nm), updatedAt: new Date().toISOString() });
+    try{ await db.doc('state/maxes').set(body); await db.doc('maxhist/'+todayStr()+'__'+lift).set({ date: todayStr(), lift, value: Number(nm), source:'suggestion' }); }catch(e){ console.warn(e); return; }
+    try{ localStorage.setItem(progKey(w.date, lift), '1'); }catch(e){}
+    b.closest('.card').innerHTML = `<div class="notes" style="color:var(--fg);">${esc(LIFT_LABEL[lift])} max is now ${nm}. Targets update on the next session.</div>`;
+  });
+}
+
+/* ---- strength view: e1RM trend, PRs, goals ---- */
+const GOAL_DEFAULT = { squat:500, bench:405, deadlift:500 };
+let goals = Object.assign({}, GOAL_DEFAULT), strLift = 'squat', strData = null;
+async function renderStrength(){
+  const main = mainEl();
+  if (offline || !db){ main.innerHTML = offlineNote(); return; }
+  main.innerHTML = '<div class="notes">Loading...</div>';
+  try{
+    const g = await db.doc('state/goals').get();
+    if (g.exists) goals = Object.assign({}, GOAL_DEFAULT, g.data());
+    const snap = await db.collection('logs').where('date','>=','2026-09-01').limit(1000).get();
+    const per = { squat:{}, bench:{}, deadlift:{} };
+    snap.docs.forEach(d => {
+      const x = d.data(); if (!x || !Array.isArray(x.sets)) return;
+      const lift = mainLiftOf(x.exercise); if (!lift) return;
+      x.sets.forEach(s => {
+        if (!s || !s.done) return;
+        const wt = Number(s.w), r = Number(s.r);
+        if (!(wt>0) || !(r>0) || r>10) return;
+        const e = epley(wt, r);
+        const cur = per[lift][x.date];
+        if (!cur || e > cur.e) per[lift][x.date] = { date:x.date, w:wt, r, e };
+        (per[lift].__sets = per[lift].__sets || []).push({ date:x.date, w:wt, r });
+      });
+    });
+    strData = per;
+  }catch(e){ console.warn('strength load failed', e); strData = null; }
+  drawStrength();
+}
+function strStats(lift){
+  const per = strData && strData[lift] ? strData[lift] : {};
+  const pts = Object.keys(per).filter(k => k!=='__sets').sort().map(k => per[k]);
+  const sets = per.__sets || [];
+  const prs = {}; [1,2,3,5].forEach(n => { let b = null; sets.forEach(s => { if (s.r >= n && (!b || s.w > b.w)) b = s; }); if (b) prs[n] = b; });
+  const bestE = pts.length ? pts.reduce((a,p) => p.e > a.e ? p : a) : null;
+  // trend: last 8 weeks, least squares on e1RM by day
+  const cut = dateStrAgo(56); const recent = pts.filter(p => p.date >= cut);
+  let slopeWk = null;
+  if (recent.length >= 4){
+    const t0 = new Date(recent[0].date+'T12:00:00').getTime();
+    const xs = recent.map(p => (new Date(p.date+'T12:00:00').getTime() - t0) / 86400000), ys = recent.map(p => p.e);
+    if (xs[xs.length-1] >= 14){
+      const n = xs.length, mx = xs.reduce((a,b)=>a+b,0)/n, my = ys.reduce((a,b)=>a+b,0)/n;
+      let nu = 0, de = 0; xs.forEach((x,i) => { nu += (x-mx)*(ys[i]-my); de += (x-mx)*(x-mx); });
+      if (de > 0) slopeWk = nu/de*7;
+    }
+  }
+  return { pts, prs, bestE, slopeWk };
+}
+const LIFT_PLAN = {
+  squat: 'Keep the Monday squat sets at RPE 7 to 8 and take the extra set only when the first ones move well. Your Week 3 miss was a volume problem, not a max problem, so protect recovery and use the readiness check. Paused squats and a light Zercher block later are the main accessories that carry over.',
+  bench: 'Friday Spoto work is the lever for the 1 to 3 inch sticking point. Track the height on the Bench tab and add weight there first. Keep the Tuesday heavy sets at RPE 8 or below until the Spoto numbers climb.',
+  deadlift: 'Thursday heavy sets stay crisp, not ground out. Add the Romanian deadlift or Nordic work when your back is quiet, and drop to the lighter swap whenever readiness shows yellow or red twice in a week.'
+};
+function drawStrength(){
+  if (curSub()!=='strength' || view!=='progress') return;
+  const main = mainEl();
+  const lift = strLift, st = strStats(lift), goal = goals[lift], cur = maxes[lift];
+  const gap = goal && cur ? goal - cur : null;
+  const best = st.bestE ? Math.round(st.bestE.e) : null;
+  const prRows = Object.keys(st.prs).map(n => `<div class="mbar"><div>${n}+ ${n==='1'?'rep':'reps'}</div><div class="notes" style="margin:0;">${fmtDate(st.prs[n].date)}</div><div class="tabular" style="text-align:right">${st.prs[n].w}${st.prs[n].r>Number(n)?'×'+st.prs[n].r:''}</div></div>`).join('');
+  let proj = '';
+  if (gap!=null && gap<=0) proj = 'Goal reached. Set the next one.';
+  else if (st.slopeWk!=null && st.slopeWk>0.3){
+    proj = `Estimated 1RM from your logged sets is moving up about ${st.slopeWk.toFixed(1)} lb per week. That is a training-set estimate, so test week is what shows where the real max is.`;
+  } else if (st.slopeWk!=null) proj = 'The logged sets are flat or dipping over the last 8 weeks, so there is no pace to project from yet.';
+  else proj = 'Needs about 4 logged sessions spread over 2 weeks before a pace can be estimated.';
+  main.innerHTML = `
+    <div class="plannav">${Object.keys(LIFT_LABEL).map(k => `<button class="mpick ${strLift===k?'on':''}" data-sl="${k}">${LIFT_LABEL[k]}</button>`).join('')}</div>
+    <div class="statrow">
+      <div class="stat"><div class="sv tabular">${cur ?? '-'}</div><div class="sl">Tested max</div></div>
+      <div class="stat"><div class="sv tabular">${best ?? '-'}</div><div class="sl">Best est. 1RM</div></div>
+      <div class="stat"><div class="sv tabular">${goal ?? '-'}</div><div class="sl">Goal</div></div>
+    </div>
+    <div class="chartbox"><canvas id="stgCanvas" width="600" height="170" style="height:170px"></canvas><div class="tooltip" id="stgTip"></div><div class="chartempty" id="stgEmpty" hidden>Log a few ${LIFT_LABEL[lift].toLowerCase()} sessions to see the trend.</div></div>
+    <div class="notes">The line is the best estimated 1RM from each session's heaviest working set. It runs below your tested max because training sets are submaximal.</div>
+    <div class="card"><div class="exname">Goal</div>
+      <div class="notes">${gap==null ? '' : gap>0 ? `${gap} lb to go from your tested max of ${cur}.` : 'You are past this goal.'} ${esc(proj)}</div>
+      <div class="bgrid" style="grid-template-columns:1fr 1fr;"><div class="bfield"><label for="gl_${lift}">${LIFT_LABEL[lift]} goal (lb)</label><input id="gl_${lift}" type="number" inputmode="decimal" value="${goal ?? ''}"></div><div class="bfield"><label for="gl_date">Target date (optional)</label><input id="gl_date" type="date" value="${goals.date || ''}"></div></div>
+      ${goals.date && gap>0 ? `<div class="notes">${(() => { const dl = Math.max(1, Math.round((new Date(goals.date+'T12:00:00') - new Date())/86400000/7)); return `About ${(gap/dl).toFixed(1)} lb of max per week over ${dl} weeks.`; })()}</div>` : ''}
+      <button class="savebtn" id="glSave">Save goal</button></div>
+    <div class="card"><div class="exname">How to get there</div><div class="notes">${esc(LIFT_PLAN[lift])}</div></div>
+    ${prRows ? `<div class="card"><div class="exname">Best sets</div>${prRows}</div>` : ''}`;
+  main.querySelectorAll('[data-sl]').forEach(b => b.onclick = () => { strLift = b.dataset.sl; drawStrength(); });
+  const canvas = document.getElementById('stgCanvas'), empty = document.getElementById('stgEmpty'), tip = document.getElementById('stgTip');
+  if (st.pts.length >= 2){
+    canvas.style.display = 'block'; empty.hidden = true;
+    const series = [{ points: st.pts.map(p => ({date:p.date, v:Math.round(p.e)})), dots:true, line:true }];
+    if (goal) series.push({ points:[{date:st.pts[0].date, v:goal},{date:st.pts[st.pts.length-1].date, v:goal}], line:true });
+    drawLine(canvas, tip, series);
+  } else { canvas.style.display = 'none'; empty.hidden = false; empty.style.position = 'static'; }
+  document.getElementById('glSave').onclick = async () => {
+    const v = document.getElementById('gl_'+lift).value, dt = document.getElementById('gl_date').value;
+    goals = Object.assign({}, goals, { [lift]: v==='' ? null : Number(v), date: dt || null });
+    try{ await db.doc('state/goals').set(Object.assign({}, goals, { updatedAt: new Date().toISOString() })); }catch(e){ console.warn(e); }
+    drawStrength();
+  };
+}
+
 /* ================= PLAN: SETTINGS ================= */
-const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking'];
+const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist'];
 async function exportBackup(){
   const msg = document.getElementById('bkMsg');
   if (!db || offline){ msg.textContent = 'Not connected.'; return; }
