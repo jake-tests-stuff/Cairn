@@ -2067,7 +2067,20 @@ function muscleMapSvg(counts){
     const n = g ? ((counts||{})[g] || 0) : 0;
     return n>0 ? `fill="var(--accent)" fill-opacity="${(0.35+0.65*n/max).toFixed(2)}"` : `fill="var(--surface2)"`;
   };
-  const fig = (list) => list.map(([g,p]) => `<polygon points="${p}" ${paint(g)} stroke="var(--bg)" stroke-width="0.4" stroke-linejoin="round"/>`).join('');
+  /* round every corner of the polygon with a small curve so the figure reads as a body, not a paper cutout */
+  const soft = (p, r) => {
+    const nums = p.trim().split(/[\s,]+/).map(Number), pts = []; for (let i=0;i+1<nums.length;i+=2) pts.push([nums[i], nums[i+1]]); const n = pts.length;
+    if (n < 3) return '';
+    const mid = (a, b, d) => { const dx = b[0]-a[0], dy = b[1]-a[1], len = Math.hypot(dx, dy) || 1, k = Math.min(r, len/2) / len; return [a[0]+dx*k*(d?1:0)+(d?0:dx*(1-k)), a[1]+dy*k*(d?1:0)+(d?0:dy*(1-k))]; };
+    let out = '';
+    for (let i=0;i<n;i++){
+      const prev = pts[(i+n-1)%n], cur = pts[i], next = pts[(i+1)%n];
+      const s = mid(cur, prev, true), e = mid(cur, next, true);
+      out += (i ? 'L' : 'M') + s[0].toFixed(1)+','+s[1].toFixed(1) + 'Q' + cur[0]+','+cur[1]+' '+e[0].toFixed(1)+','+e[1].toFixed(1);
+    }
+    return out + 'Z';
+  };
+  const fig = (list) => list.map(([g,p]) => `<path d="${soft(p, 3.2)}" ${paint(g)} stroke="var(--bg)" stroke-width="0.5" stroke-linejoin="round"/>`).join('');
   return `<svg class="mmap" viewBox="0 0 215 214" role="img" aria-label="Muscle map, front and back">
     <g>${fig(BODY_PARTS.ant)}</g><g transform="translate(115,0)">${fig(BODY_PARTS.post)}</g>
     <text x="50" y="211" text-anchor="middle" class="mmlab">FRONT</text><text x="165" y="211" text-anchor="middle" class="mmlab">BACK</text></svg>`;
