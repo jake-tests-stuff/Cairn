@@ -439,6 +439,12 @@ table.hist th{ text-transform:none; letter-spacing:0; font-size:12px; }
 .prow{ display:flex; justify-content:space-between; align-items:baseline; font-size:17px; }
 .prow b{ font-family:'Big Shoulders',system-ui,sans-serif; font-size:26px; font-weight:700; }
 .plhead{ display:flex; justify-content:space-between; align-items:center; }
+.bxrow{ display:grid; grid-template-columns:1fr 54px 92px 34px; gap:6px; align-items:center; }
+.bxrow input, .bfield input[type=text]{ background:var(--surface2); border:none; color:var(--fg); border-radius:10px; padding:10px 8px; min-height:44px; width:100%; font-size:16px; }
+.bxrow input[type=text], .bfield input[type=text]{ text-align:left; padding-inline:12px; }
+.bxrow input[type=number]{ text-align:center; }
+.bxrow input:focus, .bfield input:focus{ outline:none; box-shadow:0 0 0 2px var(--accent); }
+.bsel{ width:auto; min-height:34px; padding:6px 12px; border-radius:20px; font-size:13px; background:transparent; border:1px solid var(--line); color:var(--muted); }
 .statrow{ grid-template-columns:1.35fr 1fr 1fr; }
 .stat .sv{ font-size:26px; }
 .setline .exname{ font-family:'Archivo',system-ui,sans-serif; font-size:16px; font-weight:600; text-transform:none; letter-spacing:0; }
@@ -635,6 +641,7 @@ async function init(){
   watchSkips();
   watchDeload();
   watchExNotes();
+  watchCustom();
   watchPlanRuns();
   loadReadyWeek();
   loadBench();
@@ -992,7 +999,9 @@ function renderDay(){
 function addFormHtml(){
   return `
     <div class="card addcard">
-      ${!showAddForm ? `<button class="addbtn" id="openAdd">+ Add exercise for today</button>` : `
+      ${!showAddForm ? `<button class="addbtn" id="openAdd">+ Add exercise for today</button>
+        <button class="addbtn" id="openTpl">+ Add a saved workout</button>
+        <button class="addbtn" id="saveTpl">Save today as a template</button>` : `
         <div class="exhead"><div class="exname">Add exercise</div></div>
         <div class="addfields">
           <input id="addEx" type="text" placeholder="Exercise name" maxlength="60">
@@ -1016,6 +1025,8 @@ function addFormHtml(){
 function wireAddForm(){
   const openBtn = document.getElementById('openAdd');
   if (openBtn) openBtn.onclick = () => { showAddForm = true; renderDay(); };
+  const ot = document.getElementById('openTpl'); if (ot) ot.onclick = openTemplatePicker;
+  const st = document.getElementById('saveTpl'); if (st) st.onclick = openSaveTemplate;
   const cancelBtn = document.getElementById('cancelAdd');
   if (cancelBtn) cancelBtn.onclick = () => { showAddForm = false; renderDay(); };
   const pickWrap = document.getElementById('muscPick');
@@ -1072,6 +1083,8 @@ function wireEditControls(){
   });
   const openBtn = document.getElementById('openAdd');
   if (openBtn) openBtn.onclick = () => { showAddForm = true; renderDay(); };
+  const ot2 = document.getElementById('openTpl'); if (ot2) ot2.onclick = openTemplatePicker;
+  const st2 = document.getElementById('saveTpl'); if (st2) st2.onclick = openSaveTemplate;
 }
 
 function wireDayInputs(){
@@ -3256,13 +3269,21 @@ let planPick = null;
 function renderPlans(){
   const main = mainEl();
   if (offline || !db){ main.innerHTML = offlineNote(); return; }
-  main.innerHTML = '<div id="plActive"></div><div class="notes">Pick a template, set a start date and it fills your calendar. Plans that replace workouts only hide your scheduled ones on those days. Your logs stay.</div><div id="plLib"></div>';
+  main.innerHTML = '<div id="plActive"></div><button class="savebtn" id="plNew" style="flex:none;">Create a custom plan</button><div id="plMine"></div><div class="notes">Pick a template, set a start date and it fills your calendar. Plans that replace workouts only hide your scheduled ones on those days. Your logs stay.</div><div id="plLib"></div>';
+  document.getElementById('plNew').onclick = () => openBuilder(null);
   drawPlans();
 }
 function drawPlans(){
   if (curSub()!=='plans' || view!=='plan') return;
-  const act = document.getElementById('plActive'), lib = document.getElementById('plLib');
+  const act = document.getElementById('plActive'), lib = document.getElementById('plLib'), mine = document.getElementById('plMine');
   if (!act || !lib) return;
+  if (mine){
+    const mp = Object.values(customPlans).sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''));
+    mine.innerHTML = mp.length ? `<div class="jlabel" style="margin:4px 0;">My plans</div>` + mp.map(c => `<div class="card"><div class="exhead"><div class="exname">${esc(c.name)}</div><div class="chips"><button class="ghostbtn" data-startplan="c-${esc(c.id)}">Set up</button><button class="ghostbtn" data-editplan="${esc(c.id)}">Edit</button></div></div><div class="chips"><span class="chip">Custom</span><span class="chip">${c.weeks} weeks</span><span class="chip">${c.mode==='replace' ? 'replaces workouts' : 'adds sessions'}</span></div><div class="notes">${esc(customToPlan(c).desc)}</div></div>`).join('') : '';
+    mine.style.display = 'flex'; mine.style.flexDirection = 'column'; mine.style.gap = '8px';
+    mine.querySelectorAll('[data-startplan]').forEach(b => b.onclick = () => openPlanSheet(b.dataset.startplan));
+    mine.querySelectorAll('[data-editplan]').forEach(b => b.onclick = () => openBuilder(b.dataset.editplan));
+  }
   const today = todayStr();
   const active = planRuns.filter(r => r.active !== false);
   act.innerHTML = active.map(r => {
@@ -3280,7 +3301,9 @@ function drawPlans(){
   lib.querySelectorAll('[data-startplan]').forEach(b => b.onclick = () => openPlanSheet(b.dataset.startplan));
 }
 function openPlanSheet(id){
-  const p = PLAN_LIB.find(x => x.id === id); if (!p) return;
+  let p = PLAN_LIB.find(x => x.id === id);
+  if (!p && id.indexOf('c-') === 0 && customPlans[id.slice(2)]) p = customToPlan(customPlans[id.slice(2)]);
+  if (!p) return;
   planPick = { id, opt:p.def, km:10 };
   const monday = mondayOnOrAfter(todayStr());
   const defStart = p.pick==='trip' ? todayStr() : monday;
@@ -3288,7 +3311,7 @@ function openPlanSheet(id){
   openSheet(`
     <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">${esc(p.name)}</h2><div class="notes">${esc(p.desc)}</div></div>
     <div class="bfield"><label for="plStart">Start date${p.pick==='trip' ? '' : ' (a Monday works best)'}</label><input id="plStart" type="date" value="${defStart}"></div>
-    <div><div class="jlabel">${lab}</div><div class="rareas" id="plOpts">${p.opts.map(n => `<button class="mpick ${n===p.def?'on':''}" data-plopt="${n}" style="min-width:44px;">${n}</button>`).join('')}</div></div>
+    ${p.opts.length ? `<div><div class="jlabel">${lab}</div><div class="rareas" id="plOpts">${p.opts.map(n => `<button class="mpick ${n===p.def?'on':''}" data-plopt="${n}" style="min-width:44px;">${n}</button>`).join('')}</div></div>` : ''}
     ${p.race ? `<div><div class="jlabel">Race distance</div><div class="rareas" id="plKm">${[[5,'5K'],[10,'10K'],[21,'Half / Beast']].map(([k,l]) => `<button class="mpick ${k===10?'on':''}" data-plkm="${k}">${l}</button>`).join('')}</div><div class="notes">Long runs and rucks scale to this distance. 10K is the default.</div></div>` : ''}
     <div class="notes" id="plWarn"></div>
     <button class="savebtn" id="plGo">Start plan</button>
@@ -3322,8 +3345,174 @@ async function endPlan(id){
   drawPlans();
 }
 
+
+/* ================= TEMPLATES + CUSTOM PLANS ================= */
+let templates = {}, customPlans = {};
+function watchCustom(){
+  if (!db) return;
+  try{
+    db.collection('templates').limit(100).onSnapshot(snap => { templates = {}; snap.docs.forEach(d => { const x = d.data(); if (x && x.name) templates[d.id] = x; }); }, err => console.warn('templates sub error', err));
+    db.collection('customPlans').limit(50).onSnapshot(snap => { customPlans = {}; snap.docs.forEach(d => { const x = d.data(); if (x && x.name) customPlans[d.id] = x; }); if (view==='plan' && curSub()==='plans') drawPlans(); }, err => console.warn('custom plans sub error', err));
+  }catch(e){ console.warn(e); }
+}
+function inferMuscles(name){
+  if (MUSCLE_MAP[name]) return MUSCLE_MAP[name];
+  const n = String(name||'').toLowerCase(), m = [];
+  const rules = [
+    [/squat|leg press|lunge|split squat|leg ext|step.?up|sled/, ['Quads','Glutes']],
+    [/deadlift|rdl|romanian|hip thrust|good morning|leg curl|hamstring|nordic|swing/, ['Hamstrings','Glutes']],
+    [/bench|chest|push.?up|fly|dip|spoto/, ['Chest','Triceps']],
+    [/overhead|ohp|shoulder|lateral raise|face pull|rear delt/, ['Shoulders']],
+    [/row|pull.?up|chin|pulldown|lat /, ['Back','Biceps']],
+    [/curl/, ['Biceps']],
+    [/tricep|pushdown|skull|extension/, ['Triceps']],
+    [/calf/, ['Calves']],
+    [/plank|crunch|leg raise|knee raise|ab wheel|core|pallof|sit.?up/, ['Core']],
+    [/carry|grip|farmer|hang|suitcase/, ['Grip','Core']],
+    [/zone|run|bike|swim|ruck|conditioning|interval|walk|jog/, ['Cardio']],
+    [/mobility|stretch|flow|warm.?up/, ['Mobility']]
+  ];
+  rules.forEach(([re, ms]) => { if (re.test(n)) ms.forEach(x => { if (!m.includes(x)) m.push(x); }); });
+  return m;
+}
+const slug = (s) => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,40) || 'x';
+
+/* ---- save today's workout as a template / add a saved one to today ---- */
+function openSaveTemplate(){
+  const items = dayItems().all.filter(it => !it.hidden && it.ex);
+  if (!items.length){ return; }
+  openSheet(`
+    <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">Save as template</h2><div class="notes">${items.length} exercises from today. Weights are not saved, just exercises, sets and reps.</div></div>
+    <div class="bfield"><label for="tplName">Name</label><input id="tplName" type="text" maxlength="40" value="${esc(WORKOUTS[curIdx].focus)}"></div>
+    <button class="savebtn" id="tplSave">Save template</button>
+    <button class="ghostbtn" id="tplCancel">Cancel</button>`);
+  document.getElementById('tplCancel').onclick = closeSheet;
+  document.getElementById('tplSave').onclick = async () => {
+    const name = document.getElementById('tplName').value.trim() || 'Saved workout';
+    const id = slug(name) + '-' + Date.now().toString(36);
+    const body = { id, name, createdAt:new Date().toISOString(), items: items.map(it => ({ ex:it.ex, sets:it.sets ?? null, reps: it.reps != null ? String(it.reps) : null, rpe: it.rpe || null, rest: it.rest || null, notes: it.notes || null, raw: it.raw || null, muscles: musclesFor(it) })) };
+    templates[id] = body;
+    try{ await db.doc('templates/'+id).set(body); }catch(e){ console.warn('template save failed', e); }
+    closeSheet();
+  };
+}
+function openTemplatePicker(){
+  const list = Object.values(templates).sort((a,b) => (b.createdAt||'').localeCompare(a.createdAt||''));
+  openSheet(`
+    <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">Saved workouts</h2><div class="notes">Adds the exercises to ${esc(WORKOUTS[curIdx].day)}, ${fmtDate(WORKOUTS[curIdx].date)}.</div></div>
+    ${list.length ? list.map(x => `<div class="card"><div class="exhead"><div class="exname">${esc(x.name)}</div><div class="chips"><button class="ghostbtn" data-tpladd="${esc(x.id)}">Add</button><button class="ghostbtn" data-tpldel="${esc(x.id)}" aria-label="Delete template">&times;</button></div></div><div class="notes">${x.items.map(i => esc(i.ex)).join(', ')}</div></div>`).join('') : '<div class="notes">Nothing saved yet. Use "Save today as a template" on any workout you want to reuse.</div>'}
+    <button class="ghostbtn" id="tplClose">Close</button>`);
+  document.getElementById('tplClose').onclick = closeSheet;
+  document.querySelectorAll('[data-tpladd]').forEach(b => b.onclick = async () => {
+    const x = templates[b.dataset.tpladd]; if (!x) return;
+    const base = Date.now();
+    dayEdit.custom = (dayEdit.custom||[]).concat(x.items.map((i, n) => ({ id:'t'+base+'-'+n, ex:i.ex, sets:i.sets||null, reps:i.reps||null, tw:null, rpe:i.rpe||null, notes: i.notes || (i.sets ? null : i.raw) || null, muscles:i.muscles||[] })));
+    await saveDayEdit(); closeSheet(); showAddForm = false; renderDay();
+  });
+  document.querySelectorAll('[data-tpldel]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.tpldel; delete templates[id];
+    try{ await db.doc('templates/'+id).delete(); }catch(e){ console.warn(e); }
+    openTemplatePicker();
+  });
+}
+
+/* ---- custom plans ---- */
+function customToPlan(c){
+  return { id:'c-'+c.id, custom:true, name:c.name, setting:'Custom', weeks:c.weeks, mode:c.mode || 'replace', pick:'all', opts:[], def:null, race:false,
+    desc: `${c.days.length} ${c.days.length===1?'day':'days'} a week: ${c.days.map(d => DOW[d.dow]).join(', ')}.${c.deload ? ' Every 4th week drops a set from the bigger lifts.' : ''}`,
+    sessions:(ctx) => c.days.map((d, i) => ({ dow:d.dow, prio:i+1, focus:d.focus || DOW[d.dow], items: d.items.map(it => {
+      const ms = (it.muscles && it.muscles.length) ? it.muscles : inferMuscles(it.ex);
+      if (it.sets){ const lo = (c.deload && isDeload(ctx) && it.sets > 2) ? 1 : 0; return LI(it.ex, it.sets - lo, it.reps || '', null, it.notes || null, ms, it.rest || '2 min'); }
+      return CK(it.ex, it.reps || it.raw || '', it.notes || null, ms);
+    }) })) };
+}
+let bld = null;
+function newBuilder(c){
+  const days = {};
+  DOW.forEach((d, i) => days[i] = { on:false, focus:'', items:[] });
+  if (c) c.days.forEach(d => { days[d.dow] = { on:true, focus:d.focus || '', items: d.items.map(it => ({ ex:it.ex, sets: it.sets ? String(it.sets) : '', reps: it.reps || it.raw || '' })) }; });
+  return { id: c ? c.id : null, name: c ? c.name : '', weeks: c ? c.weeks : 8, mode: c ? (c.mode||'replace') : 'replace', deload: c ? !!c.deload : true, days, msg:'' };
+}
+function builderHtml(){
+  const b = bld;
+  const tplOpts = Object.values(templates).map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  const dayCards = DOW.map((d, i) => { const day = b.days[i]; if (!day.on) return '';
+    return `<div class="card">
+      <div class="exhead"><div class="exname">${['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][i]}</div></div>
+      <div class="bfield"><label>Name for the day (optional)</label><input type="text" maxlength="40" placeholder="e.g. Push, Legs, Long run" value="${esc(day.focus)}" data-bf="${i}"></div>
+      ${day.items.map((it, n) => `<div class="bxrow"><input type="text" maxlength="60" placeholder="Exercise" value="${esc(it.ex)}" data-bex="${i}:${n}"><input type="number" inputmode="numeric" placeholder="Sets" value="${esc(it.sets)}" data-bsets="${i}:${n}"><input type="text" placeholder="Reps or time" value="${esc(it.reps)}" data-breps="${i}:${n}"><button class="ghostbtn" data-brm="${i}:${n}" aria-label="Remove">&times;</button></div>`).join('')}
+      <div class="rbtns"><button class="ghostbtn" data-badd="${i}">+ Exercise</button>${tplOpts ? `<select class="bsel" data-bsel="${i}"><option value="">Add saved workout</option>${tplOpts}</select>` : ''}</div>
+    </div>`; }).join('');
+  return `
+    <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">${b.id ? 'Edit plan' : 'Create a plan'}</h2><div class="notes">Build one week and Cairn repeats it. Leave sets blank for something timed, like "30 min".</div></div>
+    <div class="bfield"><label for="bName">Plan name</label><input id="bName" type="text" maxlength="40" placeholder="e.g. Summer cut" value="${esc(b.name)}"></div>
+    <div><div class="jlabel">Length</div><div class="rareas">${[4,6,8,12].map(n => `<button class="mpick ${b.weeks===n?'on':''}" data-bw="${n}">${n} weeks</button>`).join('')}</div></div>
+    <div><div class="jlabel">On the days you pick</div><div class="rareas"><button class="mpick ${b.mode==='replace'?'on':''}" data-bm="replace">Replace my workouts</button><button class="mpick ${b.mode==='overlay'?'on':''}" data-bm="overlay">Add to my workouts</button></div></div>
+    <div><div class="jlabel">Training days</div><div class="rareas">${DOW.map((d, i) => `<button class="mpick ${b.days[i].on?'on':''}" data-bd="${i}" style="min-width:48px;">${d}</button>`).join('')}</div></div>
+    ${dayCards}
+    <div class="setline"><div><div class="exname">Lighter every 4th week</div><div class="notes">One fewer set on exercises with 3 or more.</div></div><button class="switch ${b.deload?'on':''}" data-bdel="1" aria-label="Deload every fourth week"></button></div>
+    <div class="notes" id="bMsg" style="color:var(--warn);">${esc(b.msg)}</div>
+    <button class="savebtn" id="bSave">Save plan</button>
+    ${b.id ? '<button class="ghostbtn danger" id="bDelete" style="align-self:flex-start;">Delete this plan</button>' : ''}
+    <button class="ghostbtn" id="bCancel">Cancel</button>`;
+}
+function renderBuilder(keepScroll){
+  const s = document.getElementById('sheet'); let el = s.querySelector('.sheetin');
+  const top = el ? el.scrollTop : 0;
+  if (!el || s.hidden){ openSheet(builderHtml()); el = s.querySelector('.sheetin'); } else { el.innerHTML = builderHtml(); el.scrollTop = keepScroll ? top : 0; }
+}
+function openBuilder(id){
+  bld = newBuilder(id ? customPlans[id] : null);
+  renderBuilder();
+  const s = document.getElementById('sheet');
+  s.oninput = (e) => {
+    const d = e.target.dataset; if (!bld) return;
+    if (e.target.id === 'bName') bld.name = e.target.value;
+    else if (d.bf != null) bld.days[d.bf].focus = e.target.value;
+    else if (d.bex) { const [i, n] = d.bex.split(':'); bld.days[i].items[n].ex = e.target.value; }
+    else if (d.bsets) { const [i, n] = d.bsets.split(':'); bld.days[i].items[n].sets = e.target.value; }
+    else if (d.breps) { const [i, n] = d.breps.split(':'); bld.days[i].items[n].reps = e.target.value; }
+  };
+  s.onchange = (e) => {
+    const d = e.target.dataset;
+    if (d.bsel != null && e.target.value){
+      const x = templates[e.target.value]; if (!x) return;
+      x.items.forEach(it => bld.days[d.bsel].items.push({ ex:it.ex, sets: it.sets ? String(it.sets) : '', reps: it.reps || it.raw || '' }));
+      renderBuilder(true);
+    }
+  };
+  s.onclick = async (e) => {
+    if (e.target === s){ closeSheet(); return; }
+    const b = e.target.closest('button'); if (!b || !bld) return; const d = b.dataset;
+    if (d.bw){ bld.weeks = Number(d.bw); renderBuilder(true); }
+    else if (d.bm){ bld.mode = d.bm; renderBuilder(true); }
+    else if (d.bd != null){ const day = bld.days[d.bd]; day.on = !day.on; if (day.on && !day.items.length) day.items.push({ ex:'', sets:'', reps:'' }); renderBuilder(true); }
+    else if (d.badd != null){ bld.days[d.badd].items.push({ ex:'', sets:'', reps:'' }); renderBuilder(true); }
+    else if (d.brm){ const [i, n] = d.brm.split(':'); bld.days[i].items.splice(Number(n), 1); renderBuilder(true); }
+    else if (d.bdel){ bld.deload = !bld.deload; renderBuilder(true); }
+    else if (b.id === 'bCancel'){ closeSheet(); }
+    else if (b.id === 'bDelete'){ const id = bld.id; delete customPlans[id]; try{ await db.doc('customPlans/'+id).delete(); }catch(err){ console.warn(err); } closeSheet(); drawPlans(); }
+    else if (b.id === 'bSave'){ await saveBuilder(); }
+  };
+}
+async function saveBuilder(){
+  const b = bld;
+  const days = [];
+  DOW.forEach((n, i) => { const day = b.days[i]; if (!day.on) return;
+    const items = day.items.filter(it => it.ex.trim()).map(it => { const sets = parseInt(it.sets, 10); return sets > 0 ? { ex:it.ex.trim(), sets, reps: it.reps.trim() || '8-10' } : { ex:it.ex.trim(), sets:null, reps:null, raw: it.reps.trim() || '' }; });
+    if (items.length) days.push({ dow:i, focus: day.focus.trim(), items });
+  });
+  if (!days.length){ b.msg = 'Add at least one training day with an exercise.'; document.getElementById('bMsg').textContent = b.msg; return; }
+  const name = b.name.trim() || 'My plan';
+  const id = b.id || (slug(name) + '-' + Date.now().toString(36));
+  const doc = { id, name, weeks:b.weeks, mode:b.mode, deload:b.deload, days, updatedAt:new Date().toISOString() };
+  customPlans[id] = doc;
+  try{ await db.doc('customPlans/'+id).set(doc); }catch(e){ console.warn('plan save failed', e); document.getElementById('bMsg').textContent = 'Could not save. Check your connection.'; return; }
+  closeSheet(); bld = null; drawPlans();
+}
+
 /* ================= PLAN: SETTINGS ================= */
-const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist','planRuns','exnotes'];
+const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist','planRuns','exnotes','templates','customPlans'];
 async function exportBackup(){
   const msg = document.getElementById('bkMsg');
   if (!db || offline){ msg.textContent = 'Not connected.'; return; }
