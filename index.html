@@ -54,7 +54,7 @@
 
 *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html{ height:100%; background:var(--bg); }
-body{ min-height:calc(100% + 2px); }
+body{ min-height:calc(100% + 2px); min-height:calc(100lvh + 2px); }
 body{
   background:var(--bg); color:var(--fg);
   font-family:'Archivo', system-ui, sans-serif;
@@ -2577,7 +2577,13 @@ function fixViewport(){
   let gap = 0;
   try{
     const st = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
-    if (st && innerHeight > innerWidth){ gap = Math.round(screen.height - innerHeight); if (gap < 12 || gap > 120) gap = 0; }
+    if (st && innerHeight > innerWidth){
+      const p = document.createElement('div');
+      p.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:100lvh;visibility:hidden;pointer-events:none';
+      document.body.appendChild(p);
+      const lv = p.getBoundingClientRect().height; p.remove();
+      gap = Math.round(lv - innerHeight); if (gap < 12 || gap > 120) gap = 0;
+    }
   }catch(e){}
   document.documentElement.style.setProperty('--vgap', gap + 'px');
 }
