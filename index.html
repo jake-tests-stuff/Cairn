@@ -3152,6 +3152,26 @@ const PLAN_LIB = [
         { dow:4, prio:6, focus:'Carries, grip, obstacles', items:[ LI('Sandbag carry',4,'40 m',7,'Bear hug or shoulder. Walk, do not run.',['Core','Back'],'90 sec'), LI('Farmer carry',3,'40 m',7,null,['Core','Back'],'90 sec'), LI('Rope or bar hang',3,'30-45 s',null,'Grip practice.',['Back','Biceps'],'90 sec'), LI('Burpees',4,10,null,'The Spartan penalty is 30. Smooth, steady pace.',['Cardio','Chest'],'90 sec') ] }
       ];
     } },
+  { id:'spartan_super', name:'Spartan Super: Hills and Descents', setting:'Gym + outdoors', weeks:12, mode:'replace', pick:'days', opts:[4,5,6], def:5, race:true,
+    desc:'Built for the Michigan Super course: about 1,900 ft of steep climbing and the same amount of descent in under 7 miles. Incline walks, hill repeats, controlled downhill work for the knees and hips, carries and grip. Two maintenance lifts. Start it 12 weeks before race day (Monday Apr 26, 2027 for a July 17 race). The last week is a taper.',
+    sessions:(c) => {
+      const prog = c.weeks>1 ? (c.w-1)/(c.weeks-1) : 1, last = c.w === c.weeks;
+      const d = last ? 0.5 : (isDeload(c) ? 0.7 : 1);
+      const hikeMin = capn(Math.round((45 + 5*(c.w-1))*d), 25, 100);
+      const pack = capn(10 + Math.floor((c.w-1)/2)*3, 10, 25);
+      const reps = capn(4 + Math.floor((c.w-1)/2), 4, 8), mins = c.w < 6 ? 2 : 3;
+      const bench = [1,6,11].includes(c.w) ? [ CK('Benchmark: timed mile', 'All out, flat', 'Run or fast walk one mile on a track or treadmill. Note the time so you can compare at the next check.', ['Cardio']), CK('Benchmark: farmer carry', 'Max time or 100 m', 'Heavy as you can hold with good posture. Note the weight and distance.', ['Core','Back']) ] : [];
+      return [
+        { dow:5, prio:1, focus: last ? 'Race week: easy shakeout' : 'Long hill hike / ruck', items: last
+          ? [ CK('Easy walk', '20 min', 'Loose and short. If your race is today, skip this and go enjoy it.', ['Cardio']) ]
+          : [ CK('Incline walk or hill hike', `${hikeMin} min · ${pack} lb`, 'Climb at 8 to 12 percent incline, or find real hills. Conversational pace. Walk the downhills slowly with short steps. Practice eating and drinking on the move.', ['Cardio','Quads','Glutes']) ] },
+        { dow:0, prio:2, focus:'Lower strength (maintenance)', items:[ LI('Squat (goblet or back)',3,5,7,'Leave 2 or 3 reps in the tank. Maintenance, not a PR day.',['Quads','Glutes']), LI('Romanian deadlift',3,6,7,'Hips back, flat back, controlled.',['Hamstrings','Glutes']), LI('Walking lunge',2,'10/leg',7,null,['Quads','Glutes']), MOB(10) ] },
+        { dow:1, prio:3, focus:'Hill repeats', items:[ CK('Hill or incline repeats', `${Math.max(3, Math.round(reps*d))} × ${mins} min climb`, 'Steep incline, hard but controlled, hands off the rails. Walk down slowly for the same time between. Stop if a knee or hip pinches.', ['Cardio','Quads','Glutes']), CK('Easy cooldown walk', '10 min', 'Flat and easy.', ['Cardio']) ] },
+        { dow:3, prio:4, focus:'Descent and knee prep', items:[ LI('Tempo step-down',3,'8/leg',6,'Three seconds down, no knee caving, light tap with the heel. Use a low box.',['Quads','Glutes'],'90 sec'), LI('Single-leg Romanian deadlift',3,'8/leg',6,'Balance first, load second.',['Hamstrings','Glutes'],'90 sec'), LI('Reverse lunge',2,'8/leg',6,'Slow lowering, short stride.',['Quads','Glutes'],'90 sec'), CK('Slow downhill walk or decline treadmill', `${Math.round(10*d)} min`, 'Short steps, soft knees, control the speed. Start with a gentle slope and add a little each week. Stop at the first sharp knee or hip pain.', ['Quads','Glutes']), MOB(8) ] },
+        { dow:2, prio:5, focus:'Upper strength (maintenance)', items:[ LI('Pull-up',3,'max - 2',7,'Stop two reps short of failure. Obstacles are mostly pulling.',['Back','Biceps']), LI('Bench press or push-up',3,6,7,null,['Chest','Triceps']), LI('Chest-supported row',3,10,7,null,['Back']), LI('Dumbbell overhead press',2,8,7,null,['Shoulders','Triceps']) ] },
+        { dow:4, prio:6, focus:'Carries, grip, obstacles', items:[ LI('Bucket or sandbag carry',4,'40 m',7,'Bear hug or shoulder, walk it. The course has bucket, sandbag and Atlas carries.',['Core','Back'],'90 sec'), LI('Farmer carry',3,'40 m',7,null,['Core','Back'],'90 sec'), LI('Rope or towel hang',3,'30-45 s',null,'Grip for the rope climb and monkey bars.',['Back','Biceps'],'90 sec'), LI('Burpees',4,10,null,'The Spartan penalty is 30. Smooth, steady pace.',['Cardio','Core']) ].concat(bench) },
+      ];
+    } },
   { id:'travel', name:'Hotel Gym / Travel', setting:'Dumbbells or bodyweight', weeks:1, mode:'replace', pick:'trip', opts:[2,3,4,5], def:3, race:false,
     desc:'Short full-body sessions for days away. Dumbbells up to about 50 lb, a bench or just a floor. Keeps momentum without hunting for equipment.',
     sessions:(c) => {
