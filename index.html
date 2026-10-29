@@ -2554,10 +2554,10 @@ function renderSettings(){
       '\nsafe top/right/bottom/left: ' + ins +
       '\ndoc scroll ' + document.documentElement.scrollHeight + ', scrollY ' + Math.round(scrollY) +
       '\ntab bar bottom ' + (r ? Math.round(r.bottom) : '-') + ', height ' + (r ? Math.round(r.height) : '-') +
-      '\ngap applied ' + getComputedStyle(document.documentElement).getPropertyValue('--vgap') +
+      '\ngap applied ' + getComputedStyle(document.documentElement).getPropertyValue('--vgap') + ' (screen - inner = ' + (screen.height - innerHeight) + ', ' + (navigator.standalone===true ? 'nav.standalone' : 'no nav.standalone') + ', ' + (matchMedia('(display-mode: standalone)').matches ? 'mq standalone' : 'no mq') + ')' +
       '\nstandalone ' + (navigator.standalone === true || matchMedia('(display-mode: standalone)').matches);
   };
-  showDisp(); document.getElementById('dispRefresh').onclick = showDisp;
+  fixViewport(); showDisp(); document.getElementById('dispRefresh').onclick = () => { fixViewport(); showDisp(); };
   const u = window.cairnUser && window.cairnUser();
   document.getElementById('acctLine').textContent = u ? ('Signed in as ' + u.email) : 'Not signed in.';
   document.getElementById('acctOut').onclick = () => { if (window.cairnSignOut) window.cairnSignOut(); };
@@ -2585,6 +2585,8 @@ fixViewport();
 ['resize','orientationchange','pageshow','focus'].forEach(ev => window.addEventListener(ev, fixViewport));
 document.addEventListener('visibilitychange', fixViewport);
 [300, 1000, 2500].forEach(ms => setTimeout(fixViewport, ms));
+setInterval(fixViewport, 1500);
+['touchstart','scroll'].forEach(ev => window.addEventListener(ev, fixViewport, { passive:true }));
 init();
 if ('serviceWorker' in navigator){ window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e)); }); }
 
