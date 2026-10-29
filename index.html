@@ -223,7 +223,7 @@ table.hist td.mut{ color:var(--muted); }
 .tabbar{
   position:fixed; left:0; right:0; bottom:0; z-index:10;
   background:var(--surface); border-top:1px solid var(--line);
-  padding:8px 16px calc(8px + env(safe-area-inset-bottom,0px));
+  padding:8px 16px max(8px, calc(env(safe-area-inset-bottom,0px) - 14px));
   display:flex; gap:6px;
 }
 .tabbtn{
@@ -290,7 +290,7 @@ table.hist td.mut{ color:var(--muted); }
 .ropt{ min-height:42px; background:var(--surface2); border:1px solid var(--line); color:var(--fg); border-radius:8px; font-size:14px; }
 .ropt.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-fg); font-weight:700; }
 .rareas, .rbtns{ display:flex; gap:6px; flex-wrap:wrap; }
-.restbar{ position:fixed; left:16px; right:16px; bottom:calc(70px + env(safe-area-inset-bottom,0px)); z-index:12; background:var(--surface); border:1px solid var(--accent); border-radius:12px; overflow:hidden; box-shadow:0 6px 20px rgba(0,0,0,.35); }
+.restbar{ position:fixed; left:16px; right:16px; bottom:calc(70px + max(0px, calc(env(safe-area-inset-bottom,0px) - 14px))); z-index:12; background:var(--surface); border:1px solid var(--accent); border-radius:12px; overflow:hidden; box-shadow:0 6px 20px rgba(0,0,0,.35); }
 .restbar .rfill{ position:absolute; left:0; top:0; bottom:0; width:0; background:var(--surface2); transition:width .25s linear; }
 .restbar .rin{ position:relative; display:flex; align-items:center; gap:10px; padding:9px 12px; }
 .restbar .rlab{ flex:1; min-width:0; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
