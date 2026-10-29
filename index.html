@@ -343,6 +343,32 @@ main > .notes, .subbody > .notes{ color:var(--muted); font-size:13px; }
 body{ font-feature-settings:'tnum' 1,'cv11' 1; -webkit-font-smoothing:antialiased; }
 main{ gap:14px; padding-block:16px 96px; }
 
+
+/* PR celebration (shown after a workout is saved) */
+.prtag{ display:inline-block; background:var(--accent); color:var(--accent-fg); font-size:10.5px; font-weight:800; letter-spacing:.12em; padding:2px 7px; border-radius:999px; margin-left:8px; vertical-align:middle; }
+.prfx{ position:fixed; inset:0; bottom:calc(0px - var(--vgap,0px)); z-index:60; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:24px; overflow:hidden;
+  background:radial-gradient(circle at 50% 40%, color-mix(in srgb,var(--accent) 24%,transparent), color-mix(in srgb,var(--bg) 94%,transparent) 62%); backdrop-filter:blur(2px); animation:prFade .3s ease both; }
+.prfx.out{ animation:prOut .35s ease forwards; }
+.prfx svg.prst{ width:130px; height:130px; position:relative; z-index:2; }
+.prfx svg.prst ellipse{ opacity:0; transform-box:fill-box; transform-origin:center; animation:prStone .5s var(--ease) forwards; }
+.prfx svg.prst ellipse:nth-child(1){ animation-delay:.15s } .prfx svg.prst ellipse:nth-child(2){ animation-delay:.5s } .prfx svg.prst ellipse:nth-child(3){ animation-delay:.85s } .prfx svg.prst ellipse:nth-child(4){ animation-delay:1.2s }
+.prfx .prring{ position:absolute; left:50%; top:40%; width:200px; height:200px; margin:-100px 0 0 -100px; border-radius:50%; border:2px solid var(--accent); opacity:0; animation:prRing 1.8s ease-out 1.5s 2; }
+.prfx .prtxt{ position:relative; z-index:2; opacity:0; animation:prRise .5s var(--ease) 1.5s forwards; display:flex; flex-direction:column; align-items:center; }
+.prfx .prwords{ font-size:13px; letter-spacing:.32em; font-weight:800; color:var(--accent); margin-top:8px; }
+.prfx .prbig{ font-size:46px; font-weight:800; line-height:1.05; margin:6px 0 2px; }
+.prfx .prlift{ font-size:17px; color:var(--muted); }
+.prfx .prdelta{ margin-top:16px; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:10px 16px; font-size:14px; color:var(--muted); line-height:1.5; }
+.prfx .prdelta b{ color:var(--good); }
+.prfx .prmore{ margin-top:8px; font-size:13px; color:var(--muted); }
+.prfx .prbtn{ margin-top:20px; background:var(--accent); color:var(--accent-fg); border:0; font:inherit; font-weight:700; border-radius:12px; padding:12px 44px; }
+.prfx .prdot{ position:absolute; border-radius:50%; background:var(--accent); opacity:0; animation:prDot 2.4s ease-out 1.5s forwards; }
+@keyframes prFade{ from{ opacity:0 } to{ opacity:1 } }
+@keyframes prOut{ to{ opacity:0 } }
+@keyframes prStone{ from{ opacity:0; transform:translateY(-16px) scale(.9) } to{ opacity:1; transform:none } }
+@keyframes prRise{ from{ opacity:0; transform:translateY(10px) } to{ opacity:1; transform:none } }
+@keyframes prRing{ 0%{ opacity:.55; transform:scale(.6) } 100%{ opacity:0; transform:scale(1.7) } }
+@keyframes prDot{ 0%{ opacity:0; transform:translateY(0) } 20%{ opacity:.9 } 100%{ opacity:0; transform:translateY(-70px) } }
+@media (prefers-reduced-motion: reduce){ .prfx *{ animation:none !important; opacity:1 !important; } .prfx .prring, .prfx .prdot{ display:none; } }
 /* header */
 .topbar{ border-bottom:none; box-shadow:0 1px 0 var(--line); }
 .daytitle .wk{ font-size:12px; letter-spacing:.06em; text-transform:none; font-weight:600; opacity:.95; }
@@ -982,7 +1008,7 @@ function renderDay(){
     html += `
       <div class="card ${isPrimary?'primary':''} ${item.hidden?'cardhidden':''}">
         <div class="exhead">
-          <div class="exname">${esc(item.ex)}</div>
+          <div class="exname">${esc(item.ex)}${logDoc[item.k] && logDoc[item.k].pr ? '<span class="prtag" title="Personal record">PR</span>' : ''}</div>
           <div class="chips">${chips.join('')}</div>
         </div>
         ${muscleChips ? `<div class="mchips">${muscleChips}</div>` : ''}
@@ -1991,7 +2017,71 @@ function openRecap(){
     try{ await db.doc('sessions/'+w.date).set(body); }catch(e){ console.warn('save session failed', e); }
     closeSheet();
     if (view==='today') renderDay();
+    celebratePRs(w);
   };
+}
+
+/* ---- PR celebration ----
+   Runs only when you save the finished workout, so nothing interrupts the sets.
+   A PR is a new best estimated one-rep max (Epley) for an exercise, compared with every earlier session.
+   Warm-ups and unchecked sets do not count, and the first time you ever log a lift is not a PR. */
+const e1rm = (w, r) => r === 1 ? w : w * (1 + r/30);
+async function findPRs(w){
+  if (offline || !db) return [];
+  const { all } = dayItems();
+  const out = [];
+  for (const it of all){
+    if (it.hidden || it.sets == null || isWarm(it.ex)) continue;
+    const log = logDoc[it.k]; if (!log || !log.sets) continue;
+    let best = null;
+    log.sets.forEach(s => {
+      const wt = Number(s && s.w), r = Number(s && s.r);
+      if (!(s && s.done) || !(wt > 0) || !(r >= 1 && r <= 12)) return;
+      const e = e1rm(wt, r); if (!best || e > best.e) best = { e, w:wt, r };
+    });
+    if (!best) continue;
+    let prior = 0;
+    try{
+      const snap = await db.collection('logs').where('exercise','==',it.ex).where('date','<',w.date).orderBy('date','desc').limit(100).get();
+      snap.docs.forEach(d => { ((d.data() || {}).sets || []).forEach(s => { const wt = Number(s && s.w), r = Number(s && s.r); if (s && s.done && wt > 0 && r >= 1 && r <= 12) prior = Math.max(prior, e1rm(wt, r)); }); });
+    }catch(e){ continue; }
+    if (!prior) continue;
+    const now = Math.round(best.e), before = Math.round(prior);
+    if (now <= before) continue;
+    if (log.pr && log.pr.e1 >= now) continue;   /* already celebrated */
+    out.push({ k: it.k, ex: it.ex.replace(/\s*\((PRIMARY|secondary)\)/i, ''), w: best.w, r: best.r, e1: now, prev: before });
+  }
+  return out;
+}
+async function celebratePRs(w){
+  let list = [];
+  try{ list = await findPRs(w); }catch(e){ return; }
+  if (!list.length) return;
+  for (const x of list){
+    const body = Object.assign({}, logDoc[x.k], { pr: { e1:x.e1, prev:x.prev, w:x.w, r:x.r }, updatedAt:new Date().toISOString() });
+    logDoc[x.k] = body;
+    try{ await db.collection('logs').doc(w.date+'__'+x.k).set(body); }catch(e){}
+  }
+  if (view === 'today') renderDay();
+  list.sort((a,b) => (b.e1-b.prev) - (a.e1-a.prev));
+  showPRCard(list);
+}
+function showPRCard(list){
+  const top = list[0], more = list.slice(1, 4);
+  const el = document.createElement('div'); el.className = 'prfx'; el.setAttribute('role','dialog'); el.setAttribute('aria-label','New personal record');
+  const dots = Array.from({length:14}, () => `<span class="prdot" style="left:${8+Math.random()*84}%;top:${22+Math.random()*40}%;width:${5+Math.random()*6|0}px;height:${5+Math.random()*6|0}px;animation-delay:${(1.5+Math.random()*0.9).toFixed(2)}s"></span>`).join('');
+  el.innerHTML = `${dots}<div class="prring"></div>
+    <svg class="prst" viewBox="0 0 100 100" aria-hidden="true"><g stroke="var(--bg)" stroke-width="1.6"><ellipse cx="50" cy="69" rx="31" ry="12" style="fill:var(--accent)"/><ellipse cx="48" cy="54" rx="25" ry="11" style="fill:color-mix(in srgb,var(--accent) 84%,#000)"/><ellipse cx="52" cy="40" rx="19" ry="10" style="fill:color-mix(in srgb,var(--accent) 82%,#fff)"/><ellipse cx="49" cy="28" rx="12" ry="8.5" style="fill:color-mix(in srgb,var(--accent) 92%,#000)"/></g></svg>
+    <div class="prtxt"><div class="prwords">NEW PR</div><div class="prbig">${top.w} × ${top.r}</div><div class="prlift">${esc(top.ex)}</div>
+      <div class="prdelta">Estimated max <b>${top.e1} lb</b><br>up ${top.e1 - top.prev} lb from your last best</div>
+      ${more.length ? `<div class="prmore">Also: ${more.map(m => esc(m.ex) + ' ' + m.w + '×' + m.r).join(', ')}</div>` : ''}
+      <button class="prbtn" type="button">Nice</button></div>`;
+  document.body.appendChild(el);
+  let gone = false;
+  const close = () => { if (gone) return; gone = true; el.classList.add('out'); setTimeout(() => el.remove(), 380); };
+  el.querySelector('.prbtn').onclick = close;
+  el.onclick = (e) => { if (e.target === el) close(); };
+  setTimeout(close, 7000);
 }
 
 /* ---- plate math: tap a barbell weight to see what to load ---- */
