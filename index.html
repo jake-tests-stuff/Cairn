@@ -2114,11 +2114,11 @@ function startRest(key){
    The element must be unlocked by a tap, so we prime it when the rest timer starts (that start comes from tapping a set). */
 let beepEl = null;
 function beepSrc(){
-  const sr = 8000, n = Math.floor(sr*0.5), buf = new ArrayBuffer(44 + n*2), v = new DataView(buf);
+  const sr = 8000, cyc = 0.75, reps = 4, n = Math.floor(sr*cyc*reps), buf = new ArrayBuffer(44 + n*2), v = new DataView(buf);
   const w = (o,s) => { for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
   w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
   v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,n*2,true);
-  for (let i=0;i<n;i++){ const t = i/sr, on = (t<0.16) || (t>0.26 && t<0.42); const env = on ? Math.min(1, (t<0.26 ? t : t-0.26)*60) : 0; v.setInt16(44+i*2, Math.sin(2*Math.PI*880*t)*env*26000, true); }
+  for (let i=0;i<n;i++){ const t = (i/sr) % cyc, on = (t<0.16) || (t>0.26 && t<0.42); const env = on ? Math.min(1, (t<0.26 ? t : t-0.26)*60) : 0; v.setInt16(44+i*2, Math.sin(2*Math.PI*880*t)*env*26000, true); }
   let s = ''; const u = new Uint8Array(buf); for (let i=0;i<u.length;i++) s += String.fromCharCode(u[i]);
   return 'data:audio/wav;base64,' + btoa(s);
 }
