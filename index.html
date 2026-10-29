@@ -2525,6 +2525,11 @@ function renderSettings(){
       <div class="notes" id="bkMsg"></div>
     </div>
     <div class="card">
+      <div class="exname">Display info</div>
+      <div class="notes" id="dispInfo" style="white-space:pre-line;font-variant-numeric:tabular-nums;"></div>
+      <button class="ghostbtn" id="dispRefresh" style="align-self:flex-start;">Refresh</button>
+    </div>
+    <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
@@ -2535,6 +2540,23 @@ function renderSettings(){
     </div>`;
   document.getElementById('swTimer').onclick = (e) => { settings.timer = !settings.timer; saveSettings(); e.currentTarget.classList.toggle('on', settings.timer); };
   document.getElementById('swSound').onclick = (e) => { settings.sound = !settings.sound; saveSettings(); e.currentTarget.classList.toggle('on', settings.sound); };
+  const showDisp = () => {
+    const pr = document.createElement('div');
+    pr.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
+    document.body.appendChild(pr); const cs = getComputedStyle(pr);
+    const ins = [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].join(' / ');
+    pr.remove();
+    const tb = document.querySelector('.tabbar'); const r = tb ? tb.getBoundingClientRect() : null;
+    const vv = window.visualViewport;
+    document.getElementById('dispInfo').textContent =
+      'inner ' + innerWidth + ' x ' + innerHeight + '\nscreen ' + screen.width + ' x ' + screen.height +
+      '\nvisual ' + (vv ? Math.round(vv.width)+' x '+Math.round(vv.height)+' (top '+Math.round(vv.offsetTop)+')' : 'n/a') +
+      '\nsafe top/right/bottom/left: ' + ins +
+      '\ndoc scroll ' + document.documentElement.scrollHeight + ', scrollY ' + Math.round(scrollY) +
+      '\ntab bar bottom ' + (r ? Math.round(r.bottom) : '-') + ', height ' + (r ? Math.round(r.height) : '-') +
+      '\nstandalone ' + (navigator.standalone === true || matchMedia('(display-mode: standalone)').matches);
+  };
+  showDisp(); document.getElementById('dispRefresh').onclick = showDisp;
   const u = window.cairnUser && window.cairnUser();
   document.getElementById('acctLine').textContent = u ? ('Signed in as ' + u.email) : 'Not signed in.';
   document.getElementById('acctOut').onclick = () => { if (window.cairnSignOut) window.cairnSignOut(); };
