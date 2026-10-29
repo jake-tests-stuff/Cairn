@@ -332,6 +332,103 @@ main > .notes, .subbody > .notes{ color:var(--muted); font-size:13px; }
 [hidden]{ display:none!important; }
 
 </style>
+<style id="polish">
+/* ---- polish pass: basalt and amber, quieter structure, one memorable element (the stone meter) ---- */
+:root{ --radius:14px; --rs:10px; --ease:cubic-bezier(.2,.7,.2,1); }
+body{ font-feature-settings:'tnum' 1,'cv11' 1; -webkit-font-smoothing:antialiased; }
+main{ gap:14px; padding-block:16px 96px; }
+
+/* header */
+.topbar{ border-bottom:none; box-shadow:0 1px 0 var(--line); }
+.daytitle .wk{ font-size:12px; letter-spacing:.06em; text-transform:none; font-weight:600; opacity:.95; }
+.daytitle h1{ font-size:32px; line-height:1; letter-spacing:.01em; }
+.daytitle .focus{ font-size:13.5px; margin-top:3px; color:var(--muted); }
+.daynav .navbtn, .edittoggle{ background:transparent; border:1px solid var(--line); border-radius:12px; width:38px; height:38px; }
+.daynav .navbtn:active, .edittoggle:active{ background:var(--surface2); }
+.viewhead h1{ font-size:32px; line-height:1; }
+.cairnmeter{ width:26px; height:40px; flex:0 0 auto; display:block; margin-right:2px; }
+.cairnmeter ellipse{ fill:none; stroke:var(--line); stroke-width:1.5; transition:fill .35s var(--ease), stroke .35s var(--ease); }
+.cairnmeter ellipse.lit{ fill:var(--accent); stroke:var(--accent); }
+.cairnmeter.full ellipse{ filter:drop-shadow(0 0 3px color-mix(in srgb,var(--accent) 55%,transparent)); }
+
+/* cards: layered surfaces, fewer outlines */
+.card, .jcard, .maxrow, .stat, .chartbox, .histwrap, .offlineflag, .ready{
+  border-color:transparent; border-radius:var(--radius);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--line) 70%,transparent);
+}
+.card{ padding:14px 16px; gap:10px; }
+.card .exname{ font-size:21px; font-weight:700; text-transform:uppercase; letter-spacing:.02em; line-height:1.1; }
+.card.primary{ box-shadow:0 0 0 1px var(--accent), 0 8px 24px -14px var(--accent); background:linear-gradient(180deg, color-mix(in srgb,var(--accent) 7%, var(--surface)) 0%, var(--surface) 60%); }
+.card.primary .exname{ color:var(--accent); font-size:24px; }
+.card.cardhidden{ opacity:.45; }
+.chip{ border:none; background:var(--surface2); color:var(--muted); font-size:12px; padding:4px 9px; }
+.chip.wt{ background:var(--accent); color:var(--accent-fg); font-weight:700; }
+.mchip{ text-transform:none; letter-spacing:.01em; font-size:12px; color:var(--faint); }
+
+/* set rows: weight is the hero, check fills amber */
+.setrow{ grid-template-columns:18px 1fr 66px 50px 46px 40px; gap:6px; padding:3px 0; border-radius:12px; transition:background .25s var(--ease); }
+.setrow .setno{ font-size:13px; font-weight:600; color:var(--faint); text-align:center; }
+.setrow .target{ font-size:12.5px; color:var(--muted); line-height:1.2; }
+.setrow input{ border:none; background:var(--surface2); border-radius:10px; min-height:44px; font-size:19px; font-weight:600; font-family:'Big Shoulders','Archivo',system-ui,sans-serif; letter-spacing:.01em; }
+.setrow input[data-field="rpe"]{ font-size:16px; font-family:inherit; font-weight:500; }
+.setrow input::placeholder{ color:var(--faint); opacity:.8; font-weight:500; }
+.setrow input:focus{ outline:none; box-shadow:0 0 0 2px var(--accent); }
+.setrow.prefilled input{ color:var(--accent); border:none; background:color-mix(in srgb,var(--accent) 12%, var(--surface2)); }
+.setrow:has(.donebtn.on){ background:color-mix(in srgb,var(--accent) 9%, transparent); }
+.setrow:has(.donebtn.on) input{ color:var(--fg); background:color-mix(in srgb,var(--accent) 14%, var(--surface2)); }
+.donebtn{ width:40px; height:40px; border:1.5px solid var(--line); background:transparent; color:transparent; font-size:18px; transition:transform .15s var(--ease), background .2s; }
+.donebtn:active{ transform:scale(.92); }
+.donebtn.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-fg); font-weight:800; }
+.cardiorow input{ border:none; border-radius:10px; min-height:44px; }
+.cardiorow input:focus{ outline:none; box-shadow:0 0 0 2px var(--accent); }
+.checkrow .label{ font-size:15px; }
+.cardiofield label, .bfield label, .setadjlabel, .rql, .jlabel, .stat .sl, .lastflag, .lastflag{ text-transform:none; letter-spacing:.01em; font-size:11.5px; }
+
+/* buttons */
+.savebtn{ border-radius:14px; text-transform:none; letter-spacing:.01em; font-size:16px; padding:14px 18px; min-height:50px; }
+.ghostbtn{ border-radius:20px; padding:7px 13px; font-size:13px; }
+.mpick{ border:none; background:var(--surface2); padding:7px 13px; font-size:13px; }
+.mpick.on{ background:var(--accent); color:var(--accent-fg); font-weight:700; }
+
+/* sub navigation: one scrolling row instead of a wrapped block */
+.plannav{ flex-wrap:nowrap; overflow-x:auto; margin-inline:-16px; padding:2px 16px 6px; scroll-snap-type:x proximity; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+.plannav::-webkit-scrollbar{ display:none; }
+.plannav .mpick{ flex:0 0 auto; scroll-snap-align:center; font-size:14px; padding:9px 15px; border-radius:22px; white-space:nowrap; }
+
+/* tab bar: line icons, amber pip on the active tab */
+.tabbar{ background:color-mix(in srgb,var(--surface) 94%, transparent); -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px); border-top:none; box-shadow:0 -1px 0 var(--line); padding-inline:12px; }
+.tabbtn{ text-transform:none; letter-spacing:.01em; font-size:11.5px; font-weight:600; gap:4px; padding:7px 0 5px; position:relative; border-radius:12px; }
+.tabbtn .ic{ display:flex; height:24px; align-items:center; }
+.tabbtn .ic svg{ width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+.tabbtn.active{ background:transparent; color:var(--accent); }
+.tabbtn.active::before{ content:''; position:absolute; top:-9px; left:50%; width:22px; height:3px; margin-left:-11px; border-radius:0 0 3px 3px; background:var(--accent); }
+
+/* readiness, stats, bars */
+.ready{ border-left-width:1px; padding:14px 16px; }
+.ready.green{ box-shadow:0 0 0 1px color-mix(in srgb,var(--good) 55%, transparent); }
+.ready.yellow{ box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 55%, transparent); }
+.ready.red{ box-shadow:0 0 0 1px color-mix(in srgb,var(--bad) 60%, transparent); }
+.ropt{ border:none; min-height:46px; border-radius:12px; }
+.stat{ padding:12px 14px; }
+.stat .sv{ font-size:30px; }
+.mtrack{ height:12px; }
+table.hist th{ text-transform:none; letter-spacing:0; font-size:12px; }
+.sheetin{ border-radius:22px 22px 0 0; }
+.switch{ border:none; }
+.switch.on{ background:var(--accent); }
+.daytitle .wk{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.statrow{ grid-template-columns:1.35fr 1fr 1fr; }
+.stat .sv{ font-size:26px; }
+.setline .exname{ font-family:'Archivo',system-ui,sans-serif; font-size:16px; font-weight:600; text-transform:none; letter-spacing:0; }
+.wkday{ display:flex; flex-direction:column; gap:3px; padding:6px 0; }
+.wkrow{ display:grid; grid-template-columns:34px 1fr 92px; gap:10px; align-items:center; font-size:14px; }
+.wkd{ font-weight:700; font-family:'Big Shoulders',system-ui,sans-serif; font-size:17px; letter-spacing:.03em; }
+.wkv{ text-align:right; color:var(--muted); font-size:13px; white-space:nowrap; }
+.wkv b{ color:var(--fg); font-size:15px; }
+.wkf{ color:var(--muted); font-size:12.5px; padding-left:44px; }
+.wkdet{ display:flex; flex-wrap:wrap; gap:4px 12px; padding-left:44px; font-size:12px; color:var(--faint); font-variant-numeric:tabular-nums; }
+@media (prefers-reduced-motion:reduce){ *{ transition:none!important; animation:none!important; } }
+</style>
 <style>
 #gate{ position:fixed; inset:0; bottom:calc(0px - var(--vgap,0px)); padding-top:env(safe-area-inset-top,0px); z-index:100; background:var(--bg); display:none; align-items:center; justify-content:center; padding:24px; }
 .gatebox{ display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; max-width:320px; }
@@ -514,6 +611,7 @@ async function init(){
   watchDayEdit();
   watchReady();
   watchSkips();
+  watchDeload();
   watchPlanRuns();
   loadReadyWeek();
   loadBench();
@@ -601,6 +699,21 @@ async function adjustSetCount(itemKey, delta){
   renderDay();
 }
 
+
+/* ===== stone meter: fills as sets and checks are completed on the day ===== */
+function updateCairn(){
+  const m = document.getElementById('cairnMeter'); if (!m) return;
+  const btns = [...document.querySelectorAll('#main .card:not(.cardhidden) .donebtn')];
+  const tot = btns.length, done = btns.filter(b => b.classList.contains('on')).length;
+  const n = tot ? Math.floor(done / tot * 5 + (done === tot ? 0 : 0)) : 0;
+  const lit = tot && done === tot ? 5 : Math.min(4, n);
+  [...m.querySelectorAll('ellipse')].forEach((e, i) => e.classList.toggle('lit', i < lit));
+  m.classList.toggle('full', !!tot && done === tot);
+  m.style.visibility = view === 'today' && tot ? 'visible' : 'hidden';
+}
+document.addEventListener('click', () => setTimeout(updateCairn, 60), true);
+document.addEventListener('input', () => setTimeout(updateCairn, 60), true);
+
 /* ===== shell / nav ===== */
 function renderShell(){
   document.getElementById('app').innerHTML = `
@@ -613,6 +726,7 @@ function renderShell(){
           <h1 id="dayLabel"></h1>
           <div class="focus" id="focusLabel"></div>
         </div>
+        <svg class="cairnmeter" id="cairnMeter" viewBox="0 0 40 60" aria-hidden="true"><ellipse cx="20" cy="52" rx="17" ry="5.2"/><ellipse cx="19" cy="42" rx="14.5" ry="5.2"/><ellipse cx="21" cy="32.5" rx="12" ry="5.2"/><ellipse cx="19.5" cy="23.5" rx="9.5" ry="5.2"/><ellipse cx="20" cy="15" rx="7" ry="5.2"/></svg>
         <button class="edittoggle" id="editToggle" aria-label="Edit day">&#9998;</button>
         <button class="todaypill" id="todayPill" hidden>Today</button>
         <button class="navbtn" id="nextDay" aria-label="Next day">&#8250;</button>
@@ -622,10 +736,10 @@ function renderShell(){
     <div class="restbar" id="restbar" hidden><div class="rfill" id="rFill"></div><div class="rin"><div class="rlab">Rest · <span id="rLabel"></span></div><div class="rtime tabular" id="rTime"></div><button class="rbtn2" id="rPlus">+30s</button><button class="rbtn2" id="rSkip">Skip</button></div></div>
     <div class="sheet" id="sheet" hidden></div>
     <nav class="tabbar">
-      <button class="tabbtn active" data-view="today"><span class="ic">&#9711;</span>Train</button>
-      <button class="tabbtn" data-view="progress"><span class="ic">&#9707;</span>Progress</button>
-      <button class="tabbtn" data-view="body"><span class="ic">&#10022;</span>Body</button>
-      <button class="tabbtn" data-view="plan"><span class="ic">&#9776;</span>Plan</button>
+      <button class="tabbtn active" data-view="today"><span class="ic"><svg viewBox="0 0 24 24"><path d="M2.5 9.5v5M5.5 7v10M18.5 7v10M21.5 9.5v5M5.5 12h13"/></svg></span>Train</button>
+      <button class="tabbtn" data-view="progress"><span class="ic"><svg viewBox="0 0 24 24"><path d="M3 19.5h18M4.5 15l4.5-4.5 3.5 3.5L19.5 6.5M15 6.5h4.5V11"/></svg></span>Progress</button>
+      <button class="tabbtn" data-view="body"><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 20.5s-7.5-4.4-7.5-10A4.4 4.4 0 0 1 12 7.6a4.4 4.4 0 0 1 7.5 2.9c0 5.6-7.5 10-7.5 10z"/><path d="M7.5 12.5h2.2l1.3-2.5 2 4 1.3-1.5h2.2"/></svg></span>Body</button>
+      <button class="tabbtn" data-view="plan"><span class="ic"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>Plan</button>
     </nav>
   `;
   document.getElementById('prevDay').onclick = () => { if (curIdx>0){ curIdx--; editMode=false; showAddForm=false; watchDayLogs(); watchDayEdit(); loadPriorPerf(); renderDay(); } };
@@ -749,6 +863,7 @@ function renderDay(){
   if (offline) html += `<div class="offlineflag">Not connected — changes here won’t be saved.</div>`;
 
   html += readinessHtml();
+  html += deloadBannerHtml();
   html += patternHtml();
   html += skipBannerHtml();
 
@@ -846,7 +961,7 @@ function renderDay(){
   html += skipBtnHtml();
   main.innerHTML = html;
   wireDayInputs();
-  wireToday();
+  wireToday(); updateCairn();
   if (editMode) wireEditControls();
 }
 
@@ -1420,12 +1535,12 @@ function renderMaxes(){
 
 /* =================== CAIRN ADDITIONS =================== */
 const SUBS = {
-  progress: [['history','Lifts'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
+  progress: [['week','Week'],['history','Lifts'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
   plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['settings','Settings']]
 };
 const VIEW_TITLES = { progress:'Progress', body:'Body', plan:'Plan' };
-let subs = { progress:'history', body:'readiness', plan:'maxes' };
+let subs = { progress:'week', body:'readiness', plan:'maxes' };
 function curSub(){ return view==='today' ? 'today' : subs[view]; }
 function mainEl(){ return document.getElementById('subbody') || document.getElementById('main'); }
 function isWarm(ex){ return /warm-up/i.test(ex||''); }
@@ -1433,8 +1548,10 @@ function dateStrAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.g
 function offlineNote(){ return `<div class="offlineflag">Not connected. Entries here will not be saved.</div>`; }
 
 /* ---- settings (per-viewer, stored locally) ---- */
-let settings = { timer:true, sound:true, units:'imperial' };
+let settings = { timer:true, sound:true, units:'imperial', theme:'system' };
 try{ const s = JSON.parse(localStorage.getItem('cairn_settings')||'null'); if (s) settings = Object.assign(settings, s); }catch(e){}
+function applyTheme(){ const r = document.documentElement; if (settings.theme === 'light' || settings.theme === 'dark') r.setAttribute('data-theme', settings.theme); else r.removeAttribute('data-theme'); }
+applyTheme();
 function saveSettings(){ try{ localStorage.setItem('cairn_settings', JSON.stringify(settings)); }catch(e){} }
 const isMetric = () => settings.units === 'metric';
 const distUnit = () => isMetric() ? 'km' : 'mi';
@@ -1453,8 +1570,10 @@ function renderSubView(){
   const list = SUBS[view];
   main.innerHTML = `<div class="plannav">${list.map(([k,l]) => `<button class="mpick ${subs[view]===k?'on':''}" data-sub="${k}">${l}</button>`).join('')}</div><div id="subbody" class="subbody"></div>`;
   main.querySelectorAll('.plannav .mpick').forEach(b => b.onclick = () => { subs[view] = b.dataset.sub; renderSubView(); });
+  { const on = main.querySelector('.plannav .mpick.on'); if (on) on.scrollIntoView({ inline:'center', block:'nearest' }); }
   const s = subs[view];
-  if (s==='history') renderHistory();
+  if (s==='week') renderWeek();
+  else if (s==='history') renderHistory();
   else if (s==='volume') renderVolume();
   else if (s==='weight') renderWeight();
   else if (s==='functional') renderFunctional();
@@ -1571,7 +1690,31 @@ function toggleArea(a){
 }
 
 /* ---- recommended plan (auto-applied from readiness) ---- */
+let deloadDoc = null; // { from, to, active }
+function deloadOn(ds){ return !!(deloadDoc && deloadDoc.active !== false && ds >= deloadDoc.from && ds <= deloadDoc.to); }
+function watchDeload(){
+  if (!db) return;
+  try{
+    db.doc('state/deload').onSnapshot(snap => {
+      deloadDoc = snap.exists ? snap.data() : null;
+      if (view==='today') renderDay();
+      else if (view==='progress' && curSub()==='week') renderWeek();
+    }, err => console.warn('deload sub error', err));
+  }catch(e){ console.warn(e); }
+}
+async function setDeload(on){
+  const from = todayStr();
+  deloadDoc = on ? { from, to: addDaysStr(from, 6), active:true, startedAt:new Date().toISOString() } : Object.assign({}, deloadDoc, { active:false });
+  try{ await db.doc('state/deload').set(deloadDoc); }catch(e){ console.warn('deload save failed', e); }
+  if (view==='today') renderDay(); else if (view==='progress' && curSub()==='week') renderWeek();
+}
+function deloadBannerHtml(){
+  const w = WORKOUTS[curIdx];
+  if (offline || !deloadOn(w.date) || w.phase === 'TEST WEEK') return '';
+  return `<div class="ready yellow"><div class="rhead"><span class="rdot"></span><div class="rtitle">Deload week</div><button class="ghostbtn" id="deloadEnd">End deload</button></div><div class="rtext">Through ${fmtDate(deloadDoc.to)}. One fewer set on the main lifts and weights 10% lighter. Keep moving, keep it easy, and let the joints settle.</div></div>`;
+}
 function recLevel(){
+  { const w0 = WORKOUTS[curIdx]; if (!offline && w0 && w0.phase !== 'TEST WEEK' && deloadOn(w0.date)) return 'deload'; }
   if (offline || !readyDoc) return null;
   const w = WORKOUTS[curIdx];
   if (w.date !== todayStr() || w.phase === 'TEST WEEK') return null;
@@ -1579,7 +1722,7 @@ function recLevel(){
   if (!lv || lv.level==='green' || readyDoc.reverted) return null;
   return lv.level;
 }
-function recScale(){ return recLevel()==='red' ? 0.9 : 1; }
+function recScale(){ const l = recLevel(); return (l==='red' || l==='deload') ? 0.9 : 1; }
 function toggleRevert(){
   if (!readyDoc) return;
   readyDoc = Object.assign({}, readyDoc, { reverted: !readyDoc.reverted, updatedAt: new Date().toISOString() });
@@ -1653,7 +1796,8 @@ function patternHtml(){
   let dismissed = false;
   try{ dismissed = localStorage.getItem('cairn_pat') === todayStr(); }catch(e){}
   if (dismissed && view==='today') return '';
-  return `<div class="ready yellow"><div class="rhead"><span class="rdot"></span><div class="rtitle">Heads up</div>${view==='today' ? '<button class="ghostbtn" id="patDismiss">Dismiss</button>' : ''}</div><div class="rtext">Last 7 days: ${p.r} red, ${p.y} yellow. That is a lot of low readiness. Consider pulling the next heavy session back, or moving the deload up a week.</div></div>`;
+  if (deloadOn(todayStr())) return '';
+  return `<div class="ready yellow"><div class="rhead"><span class="rdot"></span><div class="rtitle">Heads up</div>${view==='today' ? '<button class="ghostbtn" id="patDismiss">Dismiss</button>' : ''}</div><div class="rtext">Last 7 days: ${p.r} red, ${p.y} yellow. That is a lot of low readiness. A deload week now (one fewer set on main lifts, weights 10% lighter) usually pays off.</div>${view==='today' ? '<div class="rbtns"><button class="savebtn" id="patDeload" style="flex:none;">Start a deload week</button></div>' : ''}</div>`;
 }
 
 function readinessHtml(){
@@ -1669,7 +1813,7 @@ function readinessHtml(){
     const sw = swapOptions();
     const isTest = w.phase === 'TEST WEEK';
     const sum = `Sleep ${d.sleep} · Energy ${d.energy} · Back/hips/knees ${d.pain==='none'?'fine':d.pain}`;
-    const recLine = rl
+    const recLine = (rl && rl !== 'deload')
       ? `<div class="reclin"><span>Plan changed based on feel.</span><button class="ghostbtn" id="readyRevert">Tap to revert</button></div>`
       : ((lv.level!=='green' && d.reverted && !isTest) ? `<div class="reclin"><span>Showing the full plan.</span><button class="ghostbtn" id="readyRevert">Use recommended</button></div>` : '');
     const text = isTest && lv.level!=='green' ? 'Test week: the plan is left as written. If you feel this low, think about pushing the test back a day or two.' : t[1];
@@ -1788,6 +1932,8 @@ function wireToday(){
   const dn = document.getElementById('readyDone'); if (dn) dn.onclick = () => { readyEditing = false; renderDay(); };
   const rv = document.getElementById('readyRevert'); if (rv) rv.onclick = toggleRevert;
   main.querySelectorAll('[data-swap]').forEach(b => b.onclick = () => { const p = b.dataset.swap.split('|'); doSwap(p[0], Number(p[1])); });
+  const dl = document.getElementById('deloadEnd'); if (dl) dl.onclick = () => setDeload(false);
+  const ds = document.getElementById('patDeload'); if (ds) ds.onclick = () => setDeload(true);
   const pd = document.getElementById('patDismiss'); if (pd) pd.onclick = () => { try{ localStorage.setItem('cairn_pat', todayStr()); }catch(e){} renderDay(); };
   const fp = document.getElementById('readyFlare'); if (fp) fp.onclick = () => { subs.body = 'flareplan'; setView('body'); };
   const fb = document.getElementById('finishBtn'); if (fb) fb.onclick = openRecap;
@@ -1922,6 +2068,82 @@ async function renderVolume(){
     ${muscleMapSvg(done)}
     <div style="display:flex;flex-direction:column;gap:9px;">${rows || '<div class="notes">Nothing planned this week.</div>'}</div>
     <div class="chips" style="margin-top:10px;"><span class="chip">Zone 2 · ${cardioMin} min</span><span class="chip">Mobility sessions · ${mobDone}</span></div>`;
+}
+
+/* ================= PROGRESS: WEEKLY REVIEW ================= */
+let weekSel = null, weekToken = 0;
+const fmtLb = (n) => Math.round(n).toLocaleString('en-US');
+async function renderWeek(){
+  const main = mainEl();
+  const real = WORKOUTS.filter(w => !w.synthetic);
+  if (weekSel == null) weekSel = WORKOUTS[findTodayIdx()].week;
+  const weeks = Array.from(new Set(real.map(w => w.week)));
+  const first = weeks[0], last = weeks[weeks.length-1];
+  const days = real.filter(w => w.week === weekSel);
+  if (!days.length) { main.innerHTML = '<div class="notes">No plan for this week.</div>'; return; }
+  main.innerHTML = `
+    <div class="daynav" style="gap:10px;">
+      <button class="navbtn" id="wkPrev" ${weekSel<=first?'disabled':''} aria-label="Previous week">&#8249;</button>
+      <div class="daytitle"><div class="wk tabular">${esc(days[0].phase)}</div><h1 style="font-size:24px;">Week ${weekSel}</h1></div>
+      <button class="navbtn" id="wkNext" ${weekSel>=last?'disabled':''} aria-label="Next week">&#8250;</button>
+    </div>
+    <div id="wkBody" class="subbody"><div class="notes">Loading…</div></div>`;
+  document.getElementById('wkPrev').onclick = () => { if (weekSel>first){ weekSel--; renderWeek(); } };
+  document.getElementById('wkNext').onclick = () => { if (weekSel<last){ weekSel++; renderWeek(); } };
+  const start = days[0].date, end = days[days.length-1].date, prevStart = addDaysStr(start, -7);
+  const perDay = {}, prevTotal = { lb:0 };
+  let ready = {};
+  const token = ++weekToken;
+  if (!offline && db){
+    try{
+      const snap = await db.collection('logs').where('date','>=',prevStart).orderBy('date','asc').limit(500).get();
+      snap.docs.forEach(d => {
+        const x = d.data(); if (!x || !x.date || x.date > end || !x.sets) return;
+        let lb = 0, n = 0, top = 0;
+        x.sets.forEach(s => { if (s && s.done && s.w > 0 && s.r > 0){ lb += s.w*s.r; n++; top = Math.max(top, s.w); } });
+        if (!n) return;
+        if (x.date < start){ prevTotal.lb += lb; return; }
+        const pd = perDay[x.date] = perDay[x.date] || { lb:0, sets:0, ex:[] };
+        pd.lb += lb; pd.sets += n; pd.ex.push({ name:x.exercise, lb, n, top });
+      });
+      const rs = await db.collection('readiness').where('date','>=',start).orderBy('date','asc').limit(14).get();
+      rs.docs.forEach(d => { const x = d.data(); if (x && x.date && x.date <= end) ready[x.date] = readyLevel(x); });
+    }catch(e){ console.warn('week load failed', e); }
+  }
+  if (token !== weekToken || curSub() !== 'week' || view !== 'progress') return;
+  const total = Object.values(perDay).reduce((a,b) => a + b.lb, 0);
+  const sets = Object.values(perDay).reduce((a,b) => a + b.sets, 0);
+  const trained = Object.keys(perDay).length;
+  const planned = days.filter(w => w.items.some(it => it.sets != null && !isWarm(it.ex))).length;
+  const skipped = days.filter(w => skipsMap[w.date]).length;
+  const maxLb = Math.max(1, ...Object.values(perDay).map(p => p.lb));
+  const delta = prevTotal.lb > 0 ? Math.round((total - prevTotal.lb) / prevTotal.lb * 100) : null;
+  const rows = days.map(w => {
+    const p = perDay[w.date], sk = skipsMap[w.date];
+    const dow = w.day;
+    const bar = p ? `<div class="mtrack"><div class="mfill" style="width:${Math.max(4, Math.round(p.lb/maxLb*100))}%"></div></div>` : `<div class="mtrack"></div>`;
+    const right = p ? `<b class="tabular">${fmtLb(p.lb)}</b> lb` : (sk ? 'skipped' : (w.date > todayStr() ? '' : '-'));
+    const det = p ? `<div class="wkdet">${p.ex.sort((a,b) => b.lb - a.lb).slice(0,4).map(e => `<span>${esc(e.name.replace(/\s*\(.*\)/,''))} ${fmtLb(e.lb)}</span>`).join('')}</div>` : '';
+    return `<div class="wkday"><div class="wkrow"><div class="wkd">${dow}</div>${bar}<div class="wkv">${right}</div></div><div class="wkf">${esc(w.focus)}${p ? ` · ${p.sets} sets` : ''}</div>${det}</div>`;
+  }).join('');
+  const rsq = days.map(w => { const lv = ready[w.date]; return `<div class="rcell"><div class="rsq ${lv ? lv.level : ''}"></div><div class="rcl">${w.day.slice(0,1)}</div></div>`; }).join('');
+  const lows = days.filter(w => ready[w.date] && ready[w.date].level !== 'green').length;
+  const live = deloadOn(todayStr());
+  const advice = live ? 'Deload is on. Ease back in when it ends.'
+    : lows >= 3 ? `${lows} of this week's check-ins were yellow or red. A deload week would be reasonable.`
+    : (delta != null && delta <= -25 && trained >= 2) ? 'Weight lifted dropped a lot from last week. If that was not planned, check sleep and recovery.'
+    : 'Nothing here says you need to back off.';
+  document.getElementById('wkBody').innerHTML = `
+    <div class="statrow">
+      <div class="stat"><div class="sv tabular">${fmtLb(total)}</div><div class="sl">lb lifted</div></div>
+      <div class="stat"><div class="sv tabular">${trained}/${planned}</div><div class="sl">lift days</div></div>
+      <div class="stat"><div class="sv tabular">${sets}</div><div class="sl">sets done</div></div>
+    </div>
+    <div class="notes">${delta == null ? 'No lifting logged the week before to compare.' : `${delta >= 0 ? 'Up' : 'Down'} ${Math.abs(delta)}% from last week (${fmtLb(prevTotal.lb)} lb).`}${skipped ? ` ${skipped} skipped day${skipped>1?'s':''}.` : ''} Every checked set counts, warm-ups included.</div>
+    <div class="card"><div class="exname">By workout</div>${rows}</div>
+    <div class="card"><div class="exname">How you felt</div><div class="rgrid">${rsq}</div></div>
+    <div class="card"><div class="exname">Deload check</div><div class="notes">${esc(advice)}</div>${!live && !offline ? '<div class="rbtns"><button class="ghostbtn" id="wkDeload">Start a deload week</button></div>' : ''}</div>`;
+  const bd = document.getElementById('wkDeload'); if (bd) bd.onclick = () => setDeload(true);
 }
 
 /* ================= PROGRESS: BODYWEIGHT ================= */
@@ -2983,6 +3205,11 @@ function renderSettings(){
       <button class="ghostbtn" id="swTest" style="align-self:flex-start;">Test the timer (5 sec)</button>
     </div>
     <div class="card">
+      <div class="exname">Appearance</div>
+      <div class="notes">System follows your iPhone's Light or Dark setting.</div>
+      <div class="rareas" id="themePick">${[['system','System'],['light','Light'],['dark','Dark']].map(([k,l]) => `<button class="mpick ${settings.theme===k?'on':''}" data-theme-pick="${k}">${l}</button>`).join('')}</div>
+    </div>
+    <div class="card">
       <div class="exname">Units</div>
       <div class="notes">Distances in plans and logging. Lifting weights are in lb for now.</div>
       <div class="rareas" id="unitPick"><button class="mpick ${isMetric()?'':'on'}" data-unit="imperial">Miles</button><button class="mpick ${isMetric()?'on':''}" data-unit="metric">Kilometers</button></div>
@@ -3009,6 +3236,10 @@ function renderSettings(){
       <div class="notes">A cairn is a stack of stones that marks the trail. Each logged set is another stone.</div>
     </div>`;
   document.getElementById('swTimer').onclick = (e) => { settings.timer = !settings.timer; saveSettings(); e.currentTarget.classList.toggle('on', settings.timer); };
+  document.querySelectorAll('[data-theme-pick]').forEach(b => b.onclick = () => {
+    settings.theme = b.dataset.themePick; saveSettings(); applyTheme();
+    document.querySelectorAll('[data-theme-pick]').forEach(x => x.classList.toggle('on', x === b));
+  });
   document.querySelectorAll('[data-unit]').forEach(b => b.onclick = () => {
     settings.units = b.dataset.unit; saveSettings();
     document.querySelectorAll('[data-unit]').forEach(x => x.classList.toggle('on', x === b));
