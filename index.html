@@ -470,7 +470,7 @@ function dayItems(){
       if (rs < base){ eff = rs; rec = { from: base, to: rs }; }
     }
     const raw = (base != null && eff !== base) ? `${eff}x${it.reps ?? ''}` : it.raw;
-    return { ...it, sets: eff, baseSets: base, raw, rec, hidden: hidden.has(it.k), custom:false };
+    return { ...it, sets: eff, baseSets: base, raw, rec, hidden: hidden.has(it.k) || (!!w.planHide && !it.plan), custom:false };
   });
   const custom = (dayEdit.custom || []).map(c => {
     const k = 'custom-'+c.id;
@@ -514,6 +514,7 @@ async function init(){
   watchDayEdit();
   watchReady();
   watchSkips();
+  watchPlanRuns();
   loadReadyWeek();
   loadBench();
   loadPriorPerf();
@@ -722,7 +723,7 @@ function renderMobility(){
 /* ===== today view ===== */
 function renderDay(){
   const w = WORKOUTS[curIdx];
-  document.getElementById('wkLabel').textContent = `Cairn · Week ${w.week} · ${w.phase}`;
+  document.getElementById('wkLabel').textContent = w.planLabel ? `Cairn · ${w.planLabel}` : `Cairn · Week ${w.week} · ${w.phase}`;
   document.getElementById('dayLabel').textContent = w.day;
   document.getElementById('focusLabel').textContent = `${w.focus} · ${fmtDate(w.date)}`;
   document.getElementById('prevDay').disabled = curIdx===0;
@@ -792,11 +793,11 @@ function renderDay(){
           </div>`);
       }
       body = rows.join('');
-    } else if (/zone 2/i.test(item.ex)) {
+    } else if (/zone 2|\bswim\b|interval run|\bintervals\b/i.test(item.ex)) {
       const log = logDoc[item.k] || {};
       body = `<div class="cardiorow" data-item="${item.k}">
         <div class="cardiofield"><label>min</label><input type="number" inputmode="decimal" value="${log.time ?? ''}" data-field="time"></div>
-        <div class="cardiofield"><label>mi</label><input type="number" inputmode="decimal" value="${log.dist ?? ''}" data-field="dist"></div>
+        <div class="cardiofield"><label>${item.plan ? 'km' : 'mi'}</label><input type="number" inputmode="decimal" value="${log.dist ?? ''}" data-field="dist"></div>
         <div class="cardiofield"><label>avg hr</label><input type="number" inputmode="numeric" value="${log.hr ?? ''}" data-field="hr"></div>
         <div class="cardiofield"><label>incline%</label><input type="number" inputmode="decimal" value="${log.incline ?? ''}" data-field="incline"></div>
         <button class="donebtn ${log.done?'on':''}" data-field="done">${log.done?'&#10003;':''}</button>
@@ -1421,7 +1422,7 @@ function renderMaxes(){
 const SUBS = {
   progress: [['history','Lifts'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
-  plan: [['maxes','Maxes'],['roadmap','Roadmap'],['settings','Settings']]
+  plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['settings','Settings']]
 };
 const VIEW_TITLES = { progress:'Progress', body:'Body', plan:'Plan' };
 let subs = { progress:'history', body:'readiness', plan:'maxes' };
@@ -1458,6 +1459,7 @@ function renderSubView(){
   else if (s==='mobility') renderMobility();
   else if (s==='maxes') renderMaxes();
   else if (s==='roadmap') mainEl().innerHTML = planRoadmapHtml();
+  else if (s==='plans') renderPlans();
   else if (s==='settings') renderSettings();
 }
 
@@ -1866,8 +1868,8 @@ const VOL_MUSCLES = ['Chest','Back','Shoulders','Biceps','Triceps','Quads','Hams
 async function renderVolume(){
   const main = mainEl();
   if (volWeek==null) volWeek = WORKOUTS[findTodayIdx()].week;
-  const weeks = Array.from(new Set(WORKOUTS.map(w => w.week)));
-  const days = WORKOUTS.filter(w => w.week===volWeek);
+  const weeks = Array.from(new Set(WORKOUTS.filter(w => !w.synthetic).map(w => w.week)));
+  const days = WORKOUTS.filter(w => w.week===volWeek && !w.synthetic);
   const first = weeks[0], last = weeks[weeks.length-1];
   main.innerHTML = `
     <div class="daynav" style="gap:10px;">
@@ -2312,7 +2314,7 @@ function drawSkips(){
   if (!stats || !list) return;
   const today = todayStr();
   const rows = Object.values(skipsMap).sort((a,b) => b.date.localeCompare(a.date));
-  const planned = WORKOUTS.filter(w => w.date <= today && w.items.some(it => it.sets!=null)).length;
+  const planned = WORKOUTS.filter(w => !w.synthetic && w.date <= today && w.items.some(it => it.sets!=null && !it.plan)).length;
   const past = rows.filter(r => r.date <= today);
   const last28 = past.filter(r => r.date >= dateStrAgo(27)).length;
   if (!rows.length){ stats.innerHTML = ''; list.innerHTML = '<div class="notes">Nothing skipped. Nice.</div>'; return; }
@@ -2636,8 +2638,266 @@ function drawStrength(){
   };
 }
 
+
+/* ================= TRAINING PLANS ================= */
+const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const LI = (ex, sets, reps, rpe, notes, muscles, rest) => ({ ex, sets, reps:String(reps), rpe: rpe ? String(rpe) : null, rest: rest || '2 min', notes: notes || null, muscles: muscles || [] });
+const CK = (ex, raw, notes, muscles) => ({ ex, sets:null, reps:null, raw, rest:'-', notes: notes || null, muscles: muscles || [] });
+const MOB = (min) => CK('Mobility flow', `${min} min`, '90/90 hip switches, ankle rocks, world\'s greatest stretch, thoracic rotations. Easy range, no forcing.', ['Mobility']);
+const capn = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const r1 = (n) => Math.round(n*10)/10;
+function isDeload(c){ return c.w % 4 === 0; }
+
+const PLAN_LIB = [
+  { id:'spartan_base', name:'Strength + Spartan Base', setting:'Gym + outdoors', weeks:12, mode:'overlay', pick:'extras', opts:[2,3], def:2, race:true,
+    desc:'Keeps your lifting block and adds a long weekly ruck, an easy aerobic day, and optional carries and grip work. Builds the base for a Spartan without taking recovery from the lifts.',
+    sessions:(c) => {
+      const peak = Math.max(4, 0.8*c.km), prog = c.weeks>1 ? (c.w-1)/(c.weeks-1) : 1;
+      const ruck = r1(peak*(0.35+0.65*prog)*(isDeload(c)?0.7:1));
+      const pack = capn(10 + Math.floor((c.w-1)/2)*5 - (isDeload(c)?5:0), 10, 30);
+      return [
+        { dow:5, prio:1, focus:'Long ruck / hike', items:[ CK('Zone 2 ruck', `${ruck} km · ${pack} lb`, 'Fast walk, nose-breathing pace, flat then rolling terrain. If the back or hips complain, cut pack weight before distance.', ['Cardio']) ] },
+        { dow:2, prio:2, focus:'Easy aerobic', items:[ CK('Zone 2 run or bike', `${capn(Math.round((30+2*(c.w-1))*(isDeload(c)?0.75:1)),25,55)} min`, 'Conversational pace the whole way.', ['Cardio']) ] },
+        { dow:6, prio:3, focus:'Carries and grip', items:[ LI('Farmer carry',4,'40 m',7,'Heavy but tall posture. Stop before the back rounds.',['Core','Back'],'90 sec'), LI('Suitcase carry',3,'30 m/side',7,'One side at a time. Do not lean.',['Core'],'90 sec'), LI('Dead hang',3,'30-45 s',null,'Shoulders packed, easy breathing.',['Back','Biceps'],'90 sec') ] }
+      ];
+    } },
+  { id:'spartan_build', name:'Spartan Build', setting:'Gym + outdoors', weeks:12, mode:'replace', pick:'days', opts:[4,5,6], def:5, race:true,
+    desc:'Race-specific block for the final 12 weeks: two maintenance lifts, intervals, easy runs, a long run or ruck, and carries, grip and burpees. Replaces your scheduled workouts on those days.',
+    sessions:(c) => {
+      const prog = c.weeks>1 ? (c.w-1)/(c.weeks-1) : 1, d = isDeload(c) ? 0.7 : 1;
+      const longKm = r1(c.km*(0.5+0.6*prog)*d), ruckKm = r1(c.km*(0.35+0.4*prog)*d);
+      const intervals = capn(4+Math.floor((c.w-1)/2), 4, 8);
+      return [
+        { dow:5, prio:1, focus: c.w%2 ? 'Long run' : 'Long ruck', items:[ c.w%2 ? CK('Zone 2 run', `${longKm} km`, 'Easy pace. Walk the hills if needed. Distance matters more than speed.', ['Cardio']) : CK('Zone 2 ruck', `${ruckKm} km · ${capn(15+Math.floor(c.w/2)*2,15,30)} lb`, 'Fast walk with a pack. Practice eating and drinking while moving.', ['Cardio']) ] },
+        { dow:0, prio:2, focus:'Lower strength (maintenance)', items:[ LI('Squat (goblet or back)',3,5,7,'Leave 2 or 3 reps in the tank. This is maintenance, not a PR day.',['Quads','Glutes']), LI('Romanian deadlift',3,6,7,'Hips back, flat back, light and controlled.',['Hamstrings','Glutes']), LI('Walking lunge',2,'10/leg',7,null,['Quads','Glutes']), LI('Copenhagen plank',2,'20 s/side',null,null,['Core','Hips']) ] },
+        { dow:1, prio:3, focus:'Intervals', items:[ CK('Interval run', `${intervals} × ${c.w<6 ? '1' : '2'} min hard`, 'Hills if you can. Hard but controlled, jog or walk 2 min between.', ['Cardio']), CK('Zone 2 cooldown', '10 min', 'Easy jog or walk.', ['Cardio']) ] },
+        { dow:3, prio:4, focus:'Easy run', items:[ CK('Zone 2 run', `${capn(Math.round((35+3*(c.w-1))*d),30,60)} min`, 'Conversational pace.', ['Cardio']) ] },
+        { dow:2, prio:5, focus:'Upper strength (maintenance)', items:[ LI('Bench press or push-up',3,6,7,null,['Chest','Triceps']), LI('Pull-up',3,'max - 2',7,'Stop two reps short of failure.',['Back','Biceps']), LI('Dumbbell overhead press',2,8,7,null,['Shoulders','Triceps']), LI('Chest-supported row',3,10,7,null,['Back']) ] },
+        { dow:4, prio:6, focus:'Carries, grip, obstacles', items:[ LI('Sandbag carry',4,'40 m',7,'Bear hug or shoulder. Walk, do not run.',['Core','Back'],'90 sec'), LI('Farmer carry',3,'40 m',7,null,['Core','Back'],'90 sec'), LI('Rope or bar hang',3,'30-45 s',null,'Grip practice.',['Back','Biceps'],'90 sec'), LI('Burpees',4,10,null,'The Spartan penalty is 30. Smooth, steady pace.',['Cardio','Chest'],'90 sec') ] }
+      ];
+    } },
+  { id:'travel', name:'Hotel Gym / Travel', setting:'Dumbbells or bodyweight', weeks:1, mode:'replace', pick:'trip', opts:[2,3,4,5], def:3, race:false,
+    desc:'Short full-body sessions for days away. Dumbbells up to about 50 lb, a bench or just a floor. Keeps momentum without hunting for equipment.',
+    sessions:(c) => {
+      const A = [ LI('Goblet squat',3,12,7,'Heaviest dumbbell you can find.',['Quads','Glutes']), LI('Dumbbell bench press',3,10,8,'Floor press works too.',['Chest','Triceps']), LI('1-arm dumbbell row',3,'10/side',8,null,['Back']), LI('Suitcase carry',3,'40 m',7,null,['Core']), LI('Plank',3,'45 s',null,null,['Core']) ];
+      const B = [ LI('Dumbbell split squat',3,'10/leg',7,null,['Quads','Glutes']), LI('Dumbbell overhead press',3,10,8,null,['Shoulders','Triceps']), LI('Single-leg Romanian deadlift',3,'8/leg',7,'Balance first, load second.',['Hamstrings','Glutes']), LI('Push-up',3,'max - 2',null,null,['Chest','Triceps']), LI('Hollow hold',3,'30 s',null,null,['Core']) ];
+      const C = [ CK('Conditioning circuit', '20 min', '5 rounds: 12 goblet squats, 10 push-ups, 10 rows per side, 40 s plank. Easy, steady pace.', ['Cardio','Core']), CK('Zone 2 walk or treadmill', '20 min', 'Conversational pace.', ['Cardio']), MOB(8) ];
+      const set = [A,B,C,A,B];
+      return Array.from({length:c.days}, (_,i) => ({ dow:i, prio:i+1, focus:['Full body A','Full body B','Conditioning','Full body A','Full body B'][i], items:set[i] }));
+    } },
+  { id:'athletic', name:'Athleticism and Power', setting:'Gym + field or track', weeks:8, mode:'replace', pick:'days', opts:[4,5,6], def:5, race:false,
+    desc:'Jumping, sprinting, sleds and change of direction, with two lighter lifts. Knee and hip volume starts low and follows your readiness check.',
+    sessions:(c) => {
+      const lo = isDeload(c) ? 1 : 0;
+      return [
+        { dow:0, prio:1, focus:'Jumps and sled', items:[ LI('Box jump',3+(c.w>4?1:0)-lo,3,null,'Low box, soft landing, reset every rep.',['Quads','Glutes'],'90 sec'), LI('Broad jump',3-lo,3,null,'Stick the landing.',['Quads','Glutes'],'90 sec'), LI('Sled push',4-lo,'20 m',7,'Moderate load, drive from the legs.',['Quads','Glutes'],'90 sec'), LI('Medicine ball slam',3,8,null,null,['Core','Shoulders'],'60 sec') ] },
+        { dow:3, prio:2, focus:'Speed', items:[ CK('Sprint warm-up', '10 min', 'Jog, leg swings, A-skips, two easy 40 m strides.', ['Cardio']), LI('Sprints',4+Math.floor(c.w/2)-lo,'20-30 m',null,'About 90% effort, walk back for full recovery.',['Quads','Hamstrings','Glutes'],'90 sec'), LI('Lateral bound',3,'5/side',null,'Land soft and hold for a second.',['Glutes','Hips'],'90 sec') ] },
+        { dow:1, prio:3, focus:'Upper lift', items:[ LI('Dumbbell bench press',3,8,8,null,['Chest','Triceps']), LI('Pull-up or lat pulldown',3,8,8,null,['Back','Biceps']), LI('Landmine press',3,'8/side',7,null,['Shoulders','Triceps']), LI('Face pull',3,15,7,null,['Shoulders','Back']) ] },
+        { dow:4, prio:4, focus:'Lower lift (power)', items:[ LI('Trap bar deadlift',4-lo,3,6,'Fast bar, stop well short of failure.',['Hamstrings','Glutes','Back'],'3 min'), LI('Step-up',3,'8/leg',7,null,['Quads','Glutes']), LI('Kettlebell swing',4,10,null,'Hips, not arms.',['Glutes','Hamstrings'],'90 sec'), LI('Standing calf raise',3,12,null,null,['Calves'],'60 sec') ] },
+        { dow:5, prio:5, focus:'Conditioning', items:[ CK('Sled and medicine ball circuit', '20 min', '4 rounds: sled push 20 m, ball slam 10, bear crawl 15 m, rest 90 s.', ['Cardio','Core']) ] },
+        { dow:2, prio:6, focus:'Easy aerobic + mobility', items:[ CK('Zone 2 bike or walk', '30 min', 'Conversational pace.', ['Cardio']), MOB(10) ] }
+      ];
+    } },
+  { id:'cardio_base', name:'Cardio Base (Zone 2)', setting:'Anywhere', weeks:8, mode:'replace', pick:'days', opts:[4,5,6], def:5, race:false,
+    desc:'Mostly easy aerobic work with one interval day and two short full-body lifts to hold what you have. Good for a deload month or when your back needs less load.',
+    sessions:(c) => {
+      const d = isDeload(c) ? 0.75 : 1;
+      return [
+        { dow:1, prio:1, focus:'Zone 2', items:[ CK('Zone 2 bike or run', `${Math.round(capn(30+3*(c.w-1),30,55)*d)} min`, 'Conversational the whole way.', ['Cardio']) ] },
+        { dow:5, prio:2, focus:'Long steady', items:[ CK('Zone 2 long session', `${Math.round(capn(45+5*(c.w-1),45,80)*d)} min`, 'Bike, run, ruck or swim. Easy pace.', ['Cardio']) ] },
+        { dow:3, prio:3, focus:'Intervals', items:[ CK('Intervals', `${capn(3+Math.floor(c.w/2),3,6)} × 3-4 min hard`, 'Hard but controlled, 3 min easy between.', ['Cardio']), CK('Zone 2 cooldown', '10 min', null, ['Cardio']) ] },
+        { dow:0, prio:4, focus:'Short lift A', items:[ LI('Goblet squat',2,10,6,null,['Quads','Glutes']), LI('Dumbbell press',2,10,7,null,['Chest','Triceps']), LI('Dumbbell row',2,'10/side',7,null,['Back']), LI('Plank',2,'40 s',null,null,['Core']) ] },
+        { dow:2, prio:5, focus:'Short lift B', items:[ LI('Romanian deadlift (light)',2,10,6,null,['Hamstrings','Glutes']), LI('Push-up',2,12,null,null,['Chest','Triceps']), LI('Lat pulldown',2,10,7,null,['Back','Biceps']), LI('Side plank',2,'30 s/side',null,null,['Core']) ] },
+        { dow:4, prio:6, focus:'Easy + mobility', items:[ CK('Zone 2 easy', '30 min', 'Walk, bike or light jog.', ['Cardio']), MOB(10) ] }
+      ];
+    } },
+  { id:'maintenance', name:'Maintenance and Recovery', setting:'Full gym', weeks:4, mode:'replace', pick:'days', opts:[4,5,6], def:4, race:false,
+    desc:'Holds strength with minimal fatigue during a flare-up, a stressful work stretch or a deload. Two light lifts, easy cardio and mobility.',
+    sessions:(c) => [
+      { dow:0, prio:1, focus:'Light lift A', items:[ LI('Squat (moderate)',2,5,6,'About 70% of your usual weights.',['Quads','Glutes']), LI('Bench press (moderate)',2,5,6,null,['Chest','Triceps']), LI('Chest-supported row',2,8,7,null,['Back']) ] },
+      { dow:3, prio:2, focus:'Light lift B', items:[ LI('Romanian deadlift (light)',2,6,6,null,['Hamstrings','Glutes']), LI('Dumbbell overhead press',2,8,7,null,['Shoulders','Triceps']), LI('Pull-up or pulldown',2,6,7,null,['Back','Biceps']), LI('Plank',2,'40 s',null,null,['Core']) ] },
+      { dow:1, prio:3, focus:'Easy cardio', items:[ CK('Zone 2 easy', '30 min', 'Walk, bike or swim.', ['Cardio']) ] },
+      { dow:5, prio:4, focus:'Easy cardio', items:[ CK('Zone 2 easy', '40 min', 'Walk or easy hike.', ['Cardio']) ] },
+      { dow:2, prio:5, focus:'Mobility', items:[ MOB(15) ] },
+      { dow:4, prio:6, focus:'Mobility + breathing', items:[ MOB(15), CK('Breathing', '5 min', 'Slow nose breathing, long exhales.', []) ] }
+    ] },
+  { id:'swim', name:'Swim Block', setting:'Pool', weeks:8, mode:'overlay', pick:'extras', opts:[2,3], def:2, race:false,
+    desc:'Adds pool sessions on top of your lifting: technique plus aerobic work midweek, a longer steady swim on the weekend. Easy on the joints and a good shoulder and conditioning bonus.',
+    sessions:(c) => [
+      { dow:2, prio:1, focus:'Swim: technique + aerobic', items:[ CK('Swim warm-up', '200 m easy', null, ['Cardio']), CK('Swim drills', '4 × 50 m', 'Catch-up drill, kick on your side. Easy and smooth.', ['Shoulders']), CK('Swim main set', `${4+Math.floor(c.w/2)} × 100 m`, 'Steady, 20 s rest. Stop for sharp shoulder pain.', ['Cardio','Back','Shoulders']), CK('Swim cool-down', '100 m easy', null, ['Cardio']) ] },
+      { dow:5, prio:2, focus:'Swim: steady', items:[ CK('Zone 2 swim', `${Math.round(capn(15+3*(c.w-1),15,35)*(isDeload(c)?0.75:1))} min`, 'Continuous easy swimming, count laps if you like.', ['Cardio','Back','Shoulders']) ] },
+      { dow:6, prio:3, focus:'Kick set + mobility', items:[ CK('Swim kick set', '6 × 50 m', 'With a board, steady.', ['Quads','Glutes']), MOB(10) ] }
+    ] },
+  { id:'home', name:'Home / Garage Bodyweight', setting:'Bodyweight, optional bands', weeks:8, mode:'replace', pick:'days', opts:[4,5,6], def:5, race:false,
+    desc:'No gym needed. Push-ups, single-leg work, rows under a table or on rings, and circuits. Good for a stretch when you cannot get to the gym.',
+    sessions:(c) => {
+      const w = c.w, lo = isDeload(c) ? 1 : 0;
+      return [
+        { dow:0, prio:1, focus:'Push + core', items:[ LI('Push-up',4-lo,`${8+w}`,8,'Slow down, chest to a fist from the floor.',['Chest','Triceps']), LI('Pike push-up',3,'6-10',8,null,['Shoulders','Triceps']), LI('Bench or chair dip',3,'8-12',8,null,['Triceps','Chest']), LI('Plank',3,`${30+5*w} s`,null,null,['Core'],'60 sec') ] },
+        { dow:1, prio:2, focus:'Legs', items:[ LI('Bulgarian split squat',3,`${8+Math.floor(w/2)}/leg`,8,null,['Quads','Glutes']), LI('Single-leg glute bridge',3,'12/leg',null,null,['Glutes','Hamstrings'],'60 sec'), LI('Tempo squat (3 s down)',3,12,7,null,['Quads','Glutes']), LI('Single-leg calf raise',3,15,null,null,['Calves'],'60 sec') ] },
+        { dow:3, prio:3, focus:'Pull + core', items:[ LI('Inverted row (table or rings)',4-lo,'8-12',8,'Body straight, pull the chest to the edge.',['Back','Biceps']), LI('Towel or doorway row',3,12,8,null,['Back','Biceps']), LI('Superman hold',3,'30 s',null,null,['Back'],'60 sec'), LI('Dead bug',3,'10/side',null,null,['Core'],'60 sec') ] },
+        { dow:4, prio:4, focus:'Full-body circuit', items:[ CK('Bodyweight circuit', `${15+2*w} min`, 'Rounds of 10 squats, 8 push-ups, 10 reverse lunges, 20 s plank. Steady pace.', ['Cardio','Core']) ] },
+        { dow:2, prio:5, focus:'Easy aerobic', items:[ CK('Zone 2 walk or run', `${30+2*w} min`, 'Conversational pace.', ['Cardio']) ] },
+        { dow:5, prio:6, focus:'Outdoor easy', items:[ CK('Zone 2 hike or ride', '45 min', null, ['Cardio']) ] }
+      ];
+    } },
+  { id:'hypertrophy', name:'Hypertrophy Block', setting:'Full gym', weeks:8, mode:'replace', pick:'days', opts:[4,5,6], def:5, race:false,
+    desc:'Muscle-building split with joint-friendly choices (hack squat, leg press, chest-supported rows). Add reps first, then weight. Replaces your scheduled workouts on those days.',
+    sessions:(c) => {
+      const lo = isDeload(c) ? 1 : 0;
+      return [
+        { dow:0, prio:1, focus:'Upper A (chest, back)', items:[ LI('Incline dumbbell press',4-lo,'8-10',8,'Add reps first, then weight.',['Chest','Shoulders','Triceps']), LI('Chest-supported row',4-lo,'8-10',8,null,['Back','Biceps']), LI('Lateral raise',3,'12-15',9,null,['Shoulders'],'60 sec'), LI('Triceps pressdown',3,'10-12',9,null,['Triceps'],'60 sec'), LI('Hammer curl',3,'10-12',9,null,['Biceps'],'60 sec') ] },
+        { dow:1, prio:2, focus:'Lower A (quads)', items:[ LI('Hack squat or leg press',4-lo,'8-10',8,null,['Quads','Glutes']), LI('Romanian deadlift',3,'8-10',7,'Stop when the hamstrings are loaded, not the back.',['Hamstrings','Glutes']), LI('Leg extension',3,'12-15',9,null,['Quads'],'60 sec'), LI('Seated calf raise',4,'12-15',9,null,['Calves'],'60 sec'), LI('Cable crunch',3,12,8,null,['Core'],'60 sec') ] },
+        { dow:3, prio:3, focus:'Upper B (shoulders, lats)', items:[ LI('Machine or flat dumbbell press',3-0,'8-10',8,null,['Chest','Triceps']), LI('Lat pulldown',4-lo,'10-12',8,null,['Back','Biceps']), LI('Dumbbell overhead press',3,'8-10',8,null,['Shoulders','Triceps']), LI('Rear delt fly',3,15,9,null,['Shoulders'],'60 sec'), LI('Cable curl',3,'10-12',9,null,['Biceps'],'60 sec') ] },
+        { dow:4, prio:4, focus:'Lower B (glutes, hamstrings)', items:[ LI('Leg press',3,12,8,null,['Quads','Glutes']), LI('Hip thrust',4-lo,'8-10',8,null,['Glutes','Hamstrings']), LI('Leg curl',3,'10-12',9,null,['Hamstrings'],'60 sec'), LI('Walking lunge',2,'12/leg',8,null,['Quads','Glutes']), LI('Standing calf raise',3,12,9,null,['Calves'],'60 sec') ] },
+        { dow:5, prio:5, focus:'Arms + weak points', items:[ LI('Close-grip bench press',3,8,8,null,['Triceps','Chest']), LI('Skull crusher',3,10,9,null,['Triceps'],'90 sec'), LI('Face pull',3,15,8,null,['Shoulders','Back'],'60 sec'), LI('Ab wheel or plank',3,'8-10',null,null,['Core'],'60 sec') ] },
+        { dow:2, prio:6, focus:'Easy aerobic', items:[ CK('Zone 2 easy', '30 min', 'Conversational pace.', ['Cardio']), MOB(10) ] }
+      ];
+    } }
+];
+
+function mondayOnOrAfter(ds){
+  const d = new Date(ds+'T12:00:00'); const dow = (d.getDay()+6)%7; if (dow) d.setDate(d.getDate()+7-dow);
+  return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+}
+function addDaysStr(ds, n){ const d = new Date(ds+'T12:00:00'); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); }
+function buildRun(plan, start, opt, km){
+  const runId = 'r' + Date.now().toString(36);
+  const sessions = [];
+  for (let w=1; w<=plan.weeks; w++){
+    const ctx = { w, weeks:plan.weeks, km: km || 10, days: opt };
+    let list = plan.sessions(ctx);
+    if (plan.pick === 'days') list = list.slice().sort((a,b) => a.prio-b.prio).slice(0, opt);
+    else if (plan.pick === 'extras') list = list.slice().sort((a,b) => a.prio-b.prio).slice(0, opt);
+    list.sort((a,b) => a.dow-b.dow).forEach(s => {
+      const date = addDaysStr(start, (w-1)*7 + s.dow);
+      sessions.push({ date, week:w, dow:DOW[(new Date(date+'T12:00:00').getDay()+6)%7], focus:s.focus,
+        items: s.items.map((it,i) => Object.assign({ k:`p${runId}-${date}-${i}`, raw: it.raw || (it.sets ? `${it.sets}x${it.reps}` : null), lift:null, pct:null, tw:null, plan:true, runId }, it, { raw: it.raw || (it.sets ? `${it.sets}x${it.reps}` : null) })) });
+    });
+  }
+  const end = addDaysStr(start, plan.weeks*7 - 1);
+  return { id:runId, planId:plan.id, name:plan.name, start, end, weeks:plan.weeks, mode:plan.mode, opt, km: plan.race ? km : null, sessions, active:true, createdAt:new Date().toISOString() };
+}
+
+/* ---- applying active plan runs onto the calendar (in memory) ---- */
+let planRuns = [];
+function clearPlanInjection(){
+  for (let i = WORKOUTS.length-1; i>=0; i--){
+    const w = WORKOUTS[i];
+    if (w.synthetic){ WORKOUTS.splice(i,1); continue; }
+    w.items = w.items.filter(it => !it.plan);
+    delete w.planHide; delete w.planLabel;
+    if (w._focus0 !== undefined){ w.focus = w._focus0; delete w._focus0; }
+  }
+}
+function applyPlanRuns(){
+  const keepDate = WORKOUTS[curIdx] ? WORKOUTS[curIdx].date : todayStr();
+  clearPlanInjection();
+  planRuns.filter(r => r.active !== false).forEach(run => {
+    if (run.mode === 'replace') WORKOUTS.forEach(w => { if (!w.synthetic && w.date >= run.start && w.date <= run.end) w.planHide = true; });
+    (run.sessions || []).forEach(s => {
+      let w = WORKOUTS.find(x => x.date === s.date);
+      if (!w){
+        w = { week:s.week, day:s.dow, date:s.date, phase:run.name, focus:s.focus, items:[], synthetic:true };
+        WORKOUTS.push(w);
+      } else if (!w.synthetic){
+        if (w._focus0 === undefined) w._focus0 = w.focus;
+        w.focus = run.mode === 'replace' ? s.focus : w._focus0 + ' + ' + s.focus;
+        if (run.mode === 'replace') w.planLabel = `Week ${s.week} · ${run.name}`;
+      }
+      w.items = w.items.concat(s.items);
+    });
+  });
+  WORKOUTS.sort((a,b) => a.date.localeCompare(b.date));
+  const idx = WORKOUTS.findIndex(w => w.date === keepDate);
+  curIdx = idx >= 0 ? idx : findTodayIdx();
+}
+function watchPlanRuns(){
+  if (!db) return;
+  try{
+    db.collection('planRuns').limit(30).onSnapshot(snap => {
+      planRuns = snap.docs.map(d => d.data()).filter(Boolean);
+      applyPlanRuns();
+      watchDayLogs(); watchDayEdit();
+      if (view==='today') renderDay();
+      else if (view==='plan' && curSub()==='plans') drawPlans();
+    }, err => console.warn('plan runs error', err));
+  }catch(e){ console.warn(e); }
+}
+
+/* ---- Plans screen ---- */
+let planPick = null;
+function renderPlans(){
+  const main = mainEl();
+  if (offline || !db){ main.innerHTML = offlineNote(); return; }
+  main.innerHTML = '<div id="plActive"></div><div class="notes">Pick a template, set a start date and it fills your calendar. Plans that replace workouts only hide your scheduled ones on those days. Your logs stay.</div><div id="plLib"></div>';
+  drawPlans();
+}
+function drawPlans(){
+  if (curSub()!=='plans' || view!=='plan') return;
+  const act = document.getElementById('plActive'), lib = document.getElementById('plLib');
+  if (!act || !lib) return;
+  const today = todayStr();
+  const active = planRuns.filter(r => r.active !== false);
+  act.innerHTML = active.map(r => {
+    const wk = today < r.start ? 0 : Math.min(r.weeks, Math.floor((new Date(today+'T12:00:00') - new Date(r.start+'T12:00:00'))/86400000/7)+1);
+    return `<div class="card"><div class="exhead"><div class="exname">${esc(r.name)}</div><button class="ghostbtn" data-endplan="${esc(r.id)}">End plan</button></div>
+      <div class="notes">${today < r.start ? 'Starts ' + fmtDate(r.start) : today > r.end ? 'Finished ' + fmtDate(r.end) : 'Week ' + wk + ' of ' + r.weeks} · ${fmtDate(r.start)} to ${fmtDate(r.end)}${r.mode==='replace' ? ' · replaces scheduled workouts' : ' · added to your lifting'}</div></div>`;
+  }).join('');
+  lib.innerHTML = PLAN_LIB.map(p => `
+    <div class="card"><div class="exhead"><div class="exname">${esc(p.name)}</div><button class="ghostbtn" data-startplan="${p.id}">Set up</button></div>
+      <div class="chips"><span class="chip">${esc(p.setting)}</span><span class="chip">${p.weeks} ${p.weeks===1?'week':'weeks'}</span><span class="chip">${p.mode==='replace' ? 'replaces workouts' : 'adds sessions'}</span></div>
+      <div class="notes">${esc(p.desc)}</div></div>`).join('');
+  lib.style.display = 'flex'; lib.style.flexDirection = 'column'; lib.style.gap = '8px';
+  act.style.display = 'flex'; act.style.flexDirection = 'column'; act.style.gap = '8px';
+  act.querySelectorAll('[data-endplan]').forEach(b => b.onclick = () => endPlan(b.dataset.endplan));
+  lib.querySelectorAll('[data-startplan]').forEach(b => b.onclick = () => openPlanSheet(b.dataset.startplan));
+}
+function openPlanSheet(id){
+  const p = PLAN_LIB.find(x => x.id === id); if (!p) return;
+  planPick = { id, opt:p.def, km:10 };
+  const monday = mondayOnOrAfter(todayStr());
+  const defStart = p.pick==='trip' ? todayStr() : monday;
+  const lab = p.pick==='days' ? 'Training days per week' : p.pick==='extras' ? 'Extra sessions per week' : 'Days away';
+  openSheet(`
+    <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">${esc(p.name)}</h2><div class="notes">${esc(p.desc)}</div></div>
+    <div class="bfield"><label for="plStart">Start date${p.pick==='trip' ? '' : ' (a Monday works best)'}</label><input id="plStart" type="date" value="${defStart}"></div>
+    <div><div class="jlabel">${lab}</div><div class="rareas" id="plOpts">${p.opts.map(n => `<button class="mpick ${n===p.def?'on':''}" data-plopt="${n}" style="min-width:44px;">${n}</button>`).join('')}</div></div>
+    ${p.race ? `<div><div class="jlabel">Race distance</div><div class="rareas" id="plKm">${[[5,'5K'],[10,'10K'],[21,'Half / Beast']].map(([k,l]) => `<button class="mpick ${k===10?'on':''}" data-plkm="${k}">${l}</button>`).join('')}</div><div class="notes">Long runs and rucks scale to this distance. 10K is the default.</div></div>` : ''}
+    <div class="notes" id="plWarn"></div>
+    <button class="savebtn" id="plGo">Start plan</button>
+    <button class="ghostbtn" id="plCancel">Cancel</button>`);
+  const warn = document.getElementById('plWarn');
+  const active = planRuns.filter(r => r.active !== false);
+  if (active.length) warn.textContent = 'Starting this ends your current plan (' + active.map(r => r.name).join(', ') + '). Logged sets stay.';
+  document.querySelectorAll('[data-plopt]').forEach(b => b.onclick = () => { planPick.opt = Number(b.dataset.plopt); document.querySelectorAll('[data-plopt]').forEach(x => x.classList.toggle('on', x===b)); });
+  document.querySelectorAll('[data-plkm]').forEach(b => b.onclick = () => { planPick.km = Number(b.dataset.plkm); document.querySelectorAll('[data-plkm]').forEach(x => x.classList.toggle('on', x===b)); });
+  document.getElementById('plCancel').onclick = closeSheet;
+  document.getElementById('plGo').onclick = () => startPlan(p);
+}
+async function startPlan(p){
+  let start = document.getElementById('plStart').value || todayStr();
+  if (p.pick !== 'trip') start = mondayOnOrAfter(start);
+  const run = buildRun(p, start, planPick.opt, planPick.km);
+  try{
+    for (const r of planRuns.filter(x => x.active !== false)){ await db.doc('planRuns/'+r.id).set(Object.assign({}, r, { active:false, endedAt:new Date().toISOString() })); }
+    await db.doc('planRuns/'+run.id).set(run);
+  }catch(e){ console.warn('start plan failed', e); document.getElementById('plWarn').textContent = 'Could not save the plan.'; return; }
+  planRuns = planRuns.map(r => r.active !== false ? Object.assign({}, r, { active:false }) : r).concat([run]);
+  applyPlanRuns(); watchDayLogs(); watchDayEdit();
+  closeSheet();
+  if (view==='plan') drawPlans();
+}
+async function endPlan(id){
+  const r = planRuns.find(x => x.id === id); if (!r) return;
+  try{ await db.doc('planRuns/'+id).set(Object.assign({}, r, { active:false, endedAt:new Date().toISOString() })); }catch(e){ console.warn(e); return; }
+  planRuns = planRuns.map(x => x.id === id ? Object.assign({}, x, { active:false }) : x);
+  applyPlanRuns(); watchDayLogs(); watchDayEdit();
+  drawPlans();
+}
+
 /* ================= PLAN: SETTINGS ================= */
-const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist'];
+const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist','planRuns'];
 async function exportBackup(){
   const msg = document.getElementById('bkMsg');
   if (!db || offline){ msg.textContent = 'Not connected.'; return; }
