@@ -221,7 +221,7 @@ table.hist td.mut{ color:var(--muted); }
 
 /* ---- bottom tabs ---- */
 .tabbar{
-  position:fixed; left:0; right:0; bottom:0; z-index:10;
+  position:fixed; left:0; right:0; bottom:calc(0px - var(--vgap,0px)); z-index:10;
   background:var(--surface); border-top:1px solid var(--line);
   padding:8px 16px max(8px, calc(env(safe-area-inset-bottom,0px) - 14px));
   display:flex; gap:6px;
@@ -290,7 +290,7 @@ table.hist td.mut{ color:var(--muted); }
 .ropt{ min-height:42px; background:var(--surface2); border:1px solid var(--line); color:var(--fg); border-radius:8px; font-size:14px; }
 .ropt.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-fg); font-weight:700; }
 .rareas, .rbtns{ display:flex; gap:6px; flex-wrap:wrap; }
-.restbar{ position:fixed; left:16px; right:16px; bottom:calc(70px + max(0px, calc(env(safe-area-inset-bottom,0px) - 14px))); z-index:12; background:var(--surface); border:1px solid var(--accent); border-radius:12px; overflow:hidden; box-shadow:0 6px 20px rgba(0,0,0,.35); }
+.restbar{ position:fixed; left:16px; right:16px; bottom:calc(70px - var(--vgap,0px) + max(0px, calc(env(safe-area-inset-bottom,0px) - 14px))); z-index:12; background:var(--surface); border:1px solid var(--accent); border-radius:12px; overflow:hidden; box-shadow:0 6px 20px rgba(0,0,0,.35); }
 .restbar .rfill{ position:absolute; left:0; top:0; bottom:0; width:0; background:var(--surface2); transition:width .25s linear; }
 .restbar .rin{ position:relative; display:flex; align-items:center; gap:10px; padding:9px 12px; }
 .restbar .rlab{ flex:1; min-width:0; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -299,7 +299,7 @@ table.hist td.mut{ color:var(--muted); }
 .rbtn2{ background:var(--surface2); border:1px solid var(--line); color:var(--fg); border-radius:8px; font-size:13px; padding:8px 10px; min-height:36px; }
 body.restshown main{ padding-bottom:150px; }
 .finishbtn{ width:100%; flex:none; }
-.sheet{ position:fixed; inset:0; z-index:30; background:rgba(0,0,0,.55); display:flex; align-items:flex-end; justify-content:center; }
+.sheet{ position:fixed; inset:0; bottom:calc(0px - var(--vgap,0px)); z-index:30; background:rgba(0,0,0,.55); display:flex; align-items:flex-end; justify-content:center; }
 .sheetin{ background:var(--bg); border-top:1px solid var(--line); border-radius:16px 16px 0 0; width:100%; max-width:560px; max-height:88vh; overflow:auto; padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px)); display:flex; flex-direction:column; gap:14px; color:var(--fg); }
 #stList,#skList,#flList{ display:flex; flex-direction:column; gap:8px; }
 .skipcard{ border-color:var(--warn); }
@@ -333,7 +333,7 @@ main > .notes, .subbody > .notes{ color:var(--muted); font-size:13px; }
 
 </style>
 <style>
-#gate{ position:fixed; inset:0; padding-top:env(safe-area-inset-top,0px); z-index:100; background:var(--bg); display:none; align-items:center; justify-content:center; padding:24px; }
+#gate{ position:fixed; inset:0; bottom:calc(0px - var(--vgap,0px)); padding-top:env(safe-area-inset-top,0px); z-index:100; background:var(--bg); display:none; align-items:center; justify-content:center; padding:24px; }
 .gatebox{ display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; max-width:320px; }
 #gateLogo .clogo{ width:72px; height:72px; }
 .gatetitle{ font-family:"Big Shoulders",sans-serif; font-weight:700; font-size:40px; letter-spacing:.08em; text-transform:uppercase; color:var(--fg); }
@@ -2554,6 +2554,7 @@ function renderSettings(){
       '\nsafe top/right/bottom/left: ' + ins +
       '\ndoc scroll ' + document.documentElement.scrollHeight + ', scrollY ' + Math.round(scrollY) +
       '\ntab bar bottom ' + (r ? Math.round(r.bottom) : '-') + ', height ' + (r ? Math.round(r.height) : '-') +
+      '\ngap applied ' + getComputedStyle(document.documentElement).getPropertyValue('--vgap') +
       '\nstandalone ' + (navigator.standalone === true || matchMedia('(display-mode: standalone)').matches);
   };
   showDisp(); document.getElementById('dispRefresh').onclick = showDisp;
@@ -2571,6 +2572,19 @@ function renderSettings(){
 }
 
 
+/* iOS home-screen apps sometimes report a viewport shorter than the screen; push bottom-fixed UI down by the missing amount */
+function fixViewport(){
+  let gap = 0;
+  try{
+    const st = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+    if (st && innerHeight > innerWidth){ gap = Math.round(screen.height - innerHeight); if (gap < 12 || gap > 120) gap = 0; }
+  }catch(e){}
+  document.documentElement.style.setProperty('--vgap', gap + 'px');
+}
+fixViewport();
+['resize','orientationchange','pageshow','focus'].forEach(ev => window.addEventListener(ev, fixViewport));
+document.addEventListener('visibilitychange', fixViewport);
+[300, 1000, 2500].forEach(ms => setTimeout(fixViewport, ms));
 init();
 if ('serviceWorker' in navigator){ window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e)); }); }
 
