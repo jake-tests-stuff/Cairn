@@ -116,4 +116,5 @@ window.cairnDb = () => new Promise((resolve) => {
   });
 });
 window.cairnSignOut = () => signOut(auth).then(() => location.reload());
+window.cairnToken = async () => (auth.currentUser ? auth.currentUser.getIdToken() : null);
 window.cairnUser = () => auth.currentUser;

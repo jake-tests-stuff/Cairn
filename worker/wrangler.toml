@@ -1,0 +1,23 @@
+name = "cairn-push"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+
+[vars]
+FIREBASE_PROJECT = "cairn-8a059"
+ALLOWED_EMAILS = "jakebentley0330@gmail.com"
+ALLOWED_ORIGIN = "https://jake-tests-stuff.github.io"
+VAPID_SUBJECT = "https://jake-tests-stuff.github.io/Cairn/"
+# Public half of the push key. The private half is a secret named VAPID_PRIVATE_JWK (set in the Cloudflare dashboard).
+VAPID_PUBLIC = "BCNEidd2FCukumAkMttmdGOTbm_VTimoUbJecCr1iuLGpz2G5_0cWw9_CQAU1pLKkuSQ7eJTr86EWLlBiOAW8xY"
+
+[[durable_objects.bindings]]
+name = "SCHEDULER"
+class_name = "Scheduler"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Scheduler"]
+
+[triggers]
+crons = ["*/15 * * * *"]

@@ -319,6 +319,7 @@ body.restshown main{ padding-bottom:150px; }
 .rsq.green{ background:var(--good); border-color:var(--good); } .rsq.yellow{ background:var(--yellow); border-color:var(--yellow); } .rsq.red{ background:var(--bad); border-color:var(--bad); }
 .rcl{ font-size:10px; color:var(--faint); }
 .setline{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.tinput{ background:var(--surface2); color:var(--text); border:1px solid var(--line,transparent); border-radius:10px; padding:8px 10px; font:inherit; }
 .switch{ width:48px; height:28px; border-radius:16px; border:1px solid var(--line); background:var(--surface2); position:relative; flex:0 0 auto; padding:0; }
 .switch::after{ content:''; position:absolute; top:3px; left:3px; width:20px; height:20px; border-radius:50%; background:var(--muted); transition:left .15s; }
 .switch.on{ background:var(--accent); border-color:var(--accent); } .switch.on::after{ left:23px; background:var(--accent-fg); }
@@ -784,8 +785,8 @@ function renderShell(){
   document.getElementById('todayPill').onclick = () => { curIdx = findTodayIdx(); editMode=false; showAddForm=false; watchDayLogs(); watchDayEdit(); loadPriorPerf(); renderDay(); };
   document.getElementById('editToggle').onclick = () => { editMode = !editMode; showAddForm=false; renderDay(); };
   document.querySelectorAll('.tabbtn').forEach(b => b.onclick = () => setView(b.dataset.view));
-  document.getElementById('rPlus').onclick = () => { if (restT){ restT.end += 30000; restT.total += 30; restT.fired = false; tickRest(); } };
-  document.getElementById('rSkip').onclick = () => { restT = null; tickRest(); };
+  document.getElementById('rPlus').onclick = () => { if (restT){ restT.end += 30000; restT.total += 30; restT.fired = false; tickRest(); pushRestSchedule(); } };
+  document.getElementById('rSkip').onclick = () => { restT = null; tickRest(); pushRestCancel(); };
 }
 
 function setView(v){
@@ -2089,6 +2090,53 @@ function wireToday(){
   const su = document.getElementById('skipUndo'); if (su) su.onclick = undoSkip;
 }
 
+/* ================= PUSH (locked-screen alerts via the Cloudflare worker) ================= */
+const PUSH_URL = '';   /* set to your worker address, e.g. https://cairn-push.NAME.workers.dev */
+const VAPID_PUB = 'BCNEidd2FCukumAkMttmdGOTbm_VTimoUbJecCr1iuLGpz2G5_0cWw9_CQAU1pLKkuSQ7eJTr86EWLlBiOAW8xY';
+const pushPrefs = () => Object.assign({ rest:true, morning:false, morningTime:'06:30', weekly:false, weeklyTime:'19:00' }, (settings.push||{}));
+function pushSupported(){ return !!(PUSH_URL && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window); }
+async function pushCall(path, body){
+  const tok = window.cairnToken ? await window.cairnToken() : null;
+  if (!tok) throw new Error('not signed in');
+  const r = await fetch(PUSH_URL + path, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + tok }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('error ' + r.status));
+  return j;
+}
+function b64uToBytes(s){ s = s.replace(/-/g,'+').replace(/_/g,'/'); const b = atob(s + '==='.slice((s.length+3)%4)); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+async function pushSub(create){
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub && create) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey: b64uToBytes(VAPID_PUB) });
+  return sub;
+}
+function pushPrefsBody(){ const p = pushPrefs(); return { tz: Intl.DateTimeFormat().resolvedOptions().timeZone, morning: !!p.morning, morningTime: p.morningTime, weekly: !!p.weekly, weeklyTime: p.weeklyTime }; }
+async function pushEnable(){
+  if (!pushSupported()) throw new Error('Not available here. Install the app to your Home Screen first.');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('Permission was not granted. You can allow notifications in iPhone Settings, Cairn.');
+  const sub = await pushSub(true);
+  await pushCall('/subscribe', { sub: sub.toJSON(), prefs: pushPrefsBody() });
+  settings.push = Object.assign(pushPrefs(), { on:true }); saveSettings();
+}
+async function pushDisable(){
+  try{ const sub = await pushSub(false); if (sub){ await pushCall('/unsubscribe', { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); } }catch(e){}
+  settings.push = Object.assign(pushPrefs(), { on:false }); saveSettings();
+}
+async function pushSyncPrefs(){
+  try{ const sub = await pushSub(false); if (sub) await pushCall('/prefs', { endpoint: sub.endpoint, prefs: pushPrefsBody() }); }catch(e){}
+}
+/* Rest alerts: scheduled to arrive just after the timer ends, cancelled if the app is open and handles it itself. */
+function pushRestOn(){ return pushSupported() && settings.push && settings.push.on && pushPrefs().rest && typeof Notification !== 'undefined' && Notification.permission === 'granted'; }
+async function pushRestSchedule(){
+  if (!restT || !pushRestOn()) return;
+  try{ const sub = await pushSub(false); if (sub) await pushCall('/schedule', { endpoint: sub.endpoint, id:'rest', at: restT.end + 3000, title:'Rest is up', body: restT.label + ': next set', tag:'rest' }); }catch(e){}
+}
+async function pushRestCancel(){
+  if (!pushRestOn()) return;
+  try{ const sub = await pushSub(false); if (sub) await pushCall('/cancel', { endpoint: sub.endpoint, id:'rest' }); }catch(e){}
+}
+
 /* ================= REST TIMER ================= */
 let restT = null, restInt = null;
 function parseRestSec(s){
@@ -2109,6 +2157,7 @@ function startRest(key){
   restT = { end: Date.now()+sec*1000, total: sec, label: it.ex.replace(/\s*\((PRIMARY|secondary)\)/,''), fired:false };
   if (!restInt) restInt = setInterval(tickRest, 250);
   tickRest();
+  pushRestSchedule();
 }
 /* iPhone silent switch: Web Audio is muted by it, but an audio element on the "playback" channel is not.
    The element must be unlocked by a tap, so we prime it when the rest timer starts (that start comes from tapping a set). */
@@ -2171,7 +2220,7 @@ function tickRest(){
   document.body.classList.add('restshown');
   document.getElementById('rLabel').textContent = restT.label;
   if (left<=0){
-    if (!restT.fired){ restT.fired = true; restT.doneAt = Date.now(); alertRest(); }
+    if (!restT.fired){ restT.fired = true; restT.doneAt = Date.now(); alertRest(); if (document.visibilityState === 'visible') pushRestCancel(); }
     bar.classList.add('go');
     document.getElementById('rTime').textContent = 'Go';
     document.getElementById('rFill').style.width = '100%';
@@ -3786,6 +3835,39 @@ async function importBackup(file){
     msg.textContent = 'Imported ' + n + ' records.';
   }catch(e){ console.warn(e); msg.textContent = 'Import failed: ' + (e.message || 'bad file'); }
 }
+function drawPushCard(){
+  const note = document.getElementById('pushNote'), box = document.getElementById('pushBody');
+  if (!note || !box) return;
+  const p = pushPrefs(), on = !!(settings.push && settings.push.on);
+  if (!PUSH_URL){ note.textContent = 'Locked-screen alerts need the small notification server. Not set up yet.'; box.innerHTML = ''; return; }
+  if (!pushSupported()){ note.textContent = 'Add Cairn to your Home Screen to turn these on.'; box.innerHTML = ''; return; }
+  note.textContent = 'Alerts that arrive even when your phone is locked or the app is closed.';
+  const row = (id, title, sub, val) => `<div class="setline"><div><div class="exname">${title}</div><div class="notes">${sub}</div></div><button class="switch ${val?'on':''}" id="${id}" aria-label="${title}"></button></div>`;
+  box.innerHTML = row('pushOn', 'Allow notifications', 'Asks iPhone for permission.', on) + (on ? `
+    ${row('pushRest', 'Rest timer alert', 'Pings you when rest is up with the screen locked.', p.rest)}
+    ${row('pushMorn', 'Morning check-in', 'A nudge to log how you feel.', p.morning)}
+    <div class="setline"><div class="notes">Morning time</div><input type="time" id="pushMornT" value="${p.morningTime}" class="tinput"></div>
+    ${row('pushWeek', 'Sunday review', 'A weekly summary reminder.', p.weekly)}
+    <div class="setline"><div class="notes">Sunday time</div><input type="time" id="pushWeekT" value="${p.weeklyTime}" class="tinput"></div>
+    <button class="ghostbtn" id="pushTest" style="align-self:flex-start;">Send a test notification</button>
+    <div class="notes" id="pushMsg"></div>` : '<div class="notes" id="pushMsg"></div>');
+  const msg = (s) => { const m = document.getElementById('pushMsg'); if (m) m.textContent = s; };
+  const set = (k, v) => { settings.push = Object.assign(pushPrefs(), { on:true }, { [k]: v }); saveSettings(); pushSyncPrefs(); };
+  document.getElementById('pushOn').onclick = async () => {
+    try{ if (on) await pushDisable(); else await pushEnable(); drawPushCard(); }
+    catch(e){ msg(e.message || 'Could not turn on'); }
+  };
+  if (!on) return;
+  document.getElementById('pushRest').onclick = () => { set('rest', !p.rest); drawPushCard(); };
+  document.getElementById('pushMorn').onclick = () => { set('morning', !p.morning); drawPushCard(); };
+  document.getElementById('pushWeek').onclick = () => { set('weekly', !p.weekly); drawPushCard(); };
+  document.getElementById('pushMornT').onchange = (e) => set('morningTime', e.target.value || '06:30');
+  document.getElementById('pushWeekT').onchange = (e) => set('weeklyTime', e.target.value || '19:00');
+  document.getElementById('pushTest').onclick = async () => {
+    try{ const sub = await pushSub(false); if (!sub) throw new Error('No subscription. Turn notifications off and on again.'); const r = await pushCall('/test', { endpoint: sub.endpoint }); msg(r.ok ? 'Sent. It should arrive in a few seconds.' : 'Apple rejected it (' + r.status + ').'); }
+    catch(e){ msg(e.message || 'Failed'); }
+  };
+}
 function renderSettings(){
   const main = mainEl();
   main.innerHTML = `
@@ -3794,6 +3876,11 @@ function renderSettings(){
       <div class="setline"><div><div class="exname">Rest timer</div><div class="notes">Starts when you check off a set, using the rest time in the plan.</div></div><button class="switch ${settings.timer?'on':''}" id="swTimer" aria-label="Rest timer"></button></div>
       <div class="setline"><div><div class="exname">Sound and vibration</div><div class="notes">When the timer ends. iPhones may stay silent on silent mode.</div></div><button class="switch ${settings.sound?'on':''}" id="swSound" aria-label="Sound"></button></div>
       <button class="ghostbtn" id="swTest" style="align-self:flex-start;">Test the timer (5 sec)</button>
+    </div>
+    <div class="card" id="pushCard">
+      <div class="exname">Notifications</div>
+      <div class="notes" id="pushNote"></div>
+      <div id="pushBody"></div>
     </div>
     <div class="card">
       <div class="exname">Appearance</div>
@@ -3882,6 +3969,7 @@ function renderSettings(){
   document.getElementById('bkExport').onclick = exportBackup;
   document.getElementById('bkImport').onclick = () => document.getElementById('bkFile').click();
   document.getElementById('bkFile').onchange = (e) => { const f = e.target.files[0]; if (f) importBackup(f); e.target.value = ''; };
+  drawPushCard();
   document.getElementById('swTest').onclick = () => {
     primeBeep();
     restT = { end: Date.now()+5000, total: 5, label: 'Timer test', fired:false };
