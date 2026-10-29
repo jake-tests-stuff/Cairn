@@ -797,7 +797,7 @@ function renderDay(){
       const log = logDoc[item.k] || {};
       body = `<div class="cardiorow" data-item="${item.k}">
         <div class="cardiofield"><label>min</label><input type="number" inputmode="decimal" value="${log.time ?? ''}" data-field="time"></div>
-        <div class="cardiofield"><label>${item.plan ? 'km' : 'mi'}</label><input type="number" inputmode="decimal" value="${log.dist ?? ''}" data-field="dist"></div>
+        <div class="cardiofield"><label>${distUnit()}</label><input type="number" inputmode="decimal" value="${log.dist ?? ''}" data-field="dist"></div>
         <div class="cardiofield"><label>avg hr</label><input type="number" inputmode="numeric" value="${log.hr ?? ''}" data-field="hr"></div>
         <div class="cardiofield"><label>incline%</label><input type="number" inputmode="decimal" value="${log.incline ?? ''}" data-field="incline"></div>
         <button class="donebtn ${log.done?'on':''}" data-field="done">${log.done?'&#10003;':''}</button>
@@ -1433,9 +1433,18 @@ function dateStrAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.g
 function offlineNote(){ return `<div class="offlineflag">Not connected. Entries here will not be saved.</div>`; }
 
 /* ---- settings (per-viewer, stored locally) ---- */
-let settings = { timer:true, sound:true };
+let settings = { timer:true, sound:true, units:'imperial' };
 try{ const s = JSON.parse(localStorage.getItem('cairn_settings')||'null'); if (s) settings = Object.assign(settings, s); }catch(e){}
 function saveSettings(){ try{ localStorage.setItem('cairn_settings', JSON.stringify(settings)); }catch(e){} }
+const isMetric = () => settings.units === 'metric';
+const distUnit = () => isMetric() ? 'km' : 'mi';
+/* Plan text is authored in km and metres. Convert at display time to the chosen units (miles and yards by default). */
+function uTxt(s){
+  if (typeof s !== 'string' || isMetric()) return s;
+  return s.replace(/(\d+(?:\.\d+)?) ?km\b/g, (m,n) => (Math.round(parseFloat(n)*0.621371*10)/10) + ' mi')
+          .replace(/(\d+(?:\.\d+)?) ?m\b/g, (m,n) => Math.round(parseFloat(n)*1.0936/5)*5 + ' yd');
+}
+function uItem(it){ return Object.assign({}, it, { raw:uTxt(it.raw), reps:uTxt(it.reps), notes:uTxt(it.notes) }); }
 
 /* ---- sub-view shell ---- */
 function renderSubView(){
@@ -2753,6 +2762,34 @@ const PLAN_LIB = [
         { dow:5, prio:5, focus:'Arms + weak points', items:[ LI('Close-grip bench press',3,8,8,null,['Triceps','Chest']), LI('Skull crusher',3,10,9,null,['Triceps'],'90 sec'), LI('Face pull',3,15,8,null,['Shoulders','Back'],'60 sec'), LI('Ab wheel or plank',3,'8-10',null,null,['Core'],'60 sec') ] },
         { dow:2, prio:6, focus:'Easy aerobic', items:[ CK('Zone 2 easy', '30 min', 'Conversational pace.', ['Cardio']), MOB(10) ] }
       ];
+    } },
+  { id:'powerlifting', name:'Powerlifting Peak', setting:'Full gym', weeks:12, mode:'replace', pick:'days', opts:[4,5], def:4, race:false,
+    desc:'Squat, bench and deadlift focused. Heavy singles to triples with back-off volume, close variations for weak points, and light accessories. Weights follow your maxes from the Maxes tab. The last week is a taper.',
+    sessions:(c) => {
+      const f = c.w/c.weeks, taper = c.w === c.weeks, lo = isDeload(c) ? 1 : 0;
+      const top = taper ? 'Opener-weight single, easy' : f < 0.34 ? '4x5 @ RPE 7' : f < 0.67 ? '5x3 @ RPE 8' : '3x2 @ RPE 8-9';
+      const ph = f < 0.34 ? 'volume' : f < 0.67 ? 'strength' : 'peaking';
+      return [
+        { dow:0, prio:1, focus:`Squat day (${ph})`, items:[ CK('Squat (competition style)', top, 'Pick the working weight by RPE from your recent sessions. Stop a set when depth or bracing slips, not on the clock.', ['Quads','Glutes']), LI('Back-off squat',3-lo,f<0.34?8:5,7,'Drop 10% from the top set weight. Smooth reps.',['Quads','Glutes'],'3 min'), LI('Leg press',3,10,8,'Joint-friendly volume.',['Quads','Glutes']), LI('Back extension',3,10,7,null,['Back','Hamstrings'],'90 sec'), LI('Ab wheel or plank',3,'8-10',null,null,['Core'],'60 sec') ] },
+        { dow:1, prio:2, focus:`Bench day (${ph})`, items:[ CK('Bench press (competition style)', top, 'Pause the first rep of every set. Leg drive, tight upper back.', ['Chest','Triceps']), LI('Back-off bench',3-lo,f<0.34?8:5,7,'Drop 10% from the top set.',['Chest','Triceps'],'3 min'), LI('Chest-supported row',4,8,8,null,['Back','Biceps']), LI('Triceps pushdown',3,12,9,null,['Triceps'],'60 sec'), LI('Face pull',3,15,8,null,['Shoulders','Back'],'60 sec') ] },
+        { dow:3, prio:3, focus:`Deadlift day (${ph})`, items:[ CK('Deadlift (competition style)', taper ? 'Opener-weight single, easy' : f < 0.34 ? '3x5 @ RPE 7' : f < 0.67 ? '4x3 @ RPE 8' : '2x2 @ RPE 8-9', 'Reset every rep. Stop a set if your back position changes. Back and hip history means form beats load.', ['Back','Glutes','Hamstrings']), LI('Romanian deadlift or deficit pull',3-lo,6,7,'Lighter than the top pull. Hamstrings, not back.',['Hamstrings','Glutes']), LI('Lat pulldown',3,10,8,null,['Back','Biceps']), LI('Hanging knee raise',3,10,null,null,['Core'],'60 sec') ] },
+        { dow:4, prio:4, focus:'Bench volume + shoulders', items:[ LI('Close-grip or incline bench',4-lo,8,8,'Weak point work.',['Chest','Triceps']), LI('Dumbbell overhead press',3,8,8,null,['Shoulders','Triceps']), LI('Cable row',3,10,8,null,['Back','Biceps']), LI('Lateral raise',3,15,9,null,['Shoulders'],'60 sec'), LI('Rear delt fly',3,15,9,null,['Shoulders'],'60 sec') ] },
+        { dow:5, prio:5, focus:'Squat variation + conditioning', items:[ LI('Pause squat or front squat',3,5,7,'Lighter. Technique and position.',['Quads','Core']), LI('Walking lunge',2,'10/leg',7,null,['Quads','Glutes']), CK('Easy aerobic', '20 min', 'Sled, bike or incline walk. Conversational.', ['Cardio']), MOB(10) ] }
+      ];
+    } },
+  { id:'powerbuilding', name:'Powerbuilding', setting:'Full gym', weeks:12, mode:'replace', pick:'days', opts:[4,5,6], def:5, race:false,
+    desc:'Heavy work on squat, bench and deadlift first, then bodybuilding volume for size and joint health. The middle ground between the powerlifting and hypertrophy blocks. Replaces your scheduled workouts on those days.',
+    sessions:(c) => {
+      const lo = isDeload(c) ? 1 : 0, f = c.w/c.weeks;
+      const heavy = f < 0.5 ? '4x5 @ RPE 7-8' : '4x3 @ RPE 8';
+      return [
+        { dow:0, prio:1, focus:'Squat + quads', items:[ CK('Squat (heavy)', heavy, 'Top work first while fresh. Keep a rep or two in reserve.', ['Quads','Glutes']), LI('Hack squat or leg press',3-lo,'10-12',8,null,['Quads','Glutes']), LI('Leg extension',3,'12-15',9,null,['Quads'],'60 sec'), LI('Back extension',3,12,7,null,['Back','Hamstrings'],'90 sec'), LI('Ab wheel or plank',3,'8-10',null,null,['Core'],'60 sec') ] },
+        { dow:1, prio:2, focus:'Bench + chest, triceps', items:[ CK('Bench press (heavy)', heavy, 'Pause the first rep. Leg drive, tight upper back.', ['Chest','Triceps']), LI('Incline dumbbell press',3-lo,'8-10',8,null,['Chest','Shoulders']), LI('Cable fly',3,'12-15',9,null,['Chest'],'60 sec'), LI('Triceps pushdown',3,'10-12',9,null,['Triceps'],'60 sec'), LI('Skull crusher',2,10,9,null,['Triceps'],'90 sec') ] },
+        { dow:3, prio:3, focus:'Deadlift + back', items:[ CK('Deadlift (heavy)', f < 0.5 ? '3x5 @ RPE 7' : '3x3 @ RPE 8', 'Reset each rep. Form over load.', ['Back','Glutes','Hamstrings']), LI('Chest-supported row',4-lo,'8-10',8,null,['Back','Biceps']), LI('Lat pulldown',3,'10-12',8,null,['Back','Biceps']), LI('Face pull',3,15,8,null,['Shoulders','Back'],'60 sec'), LI('Hammer curl',3,12,9,null,['Biceps'],'60 sec') ] },
+        { dow:4, prio:4, focus:'Shoulders + arms', items:[ LI('Dumbbell overhead press',4-lo,'6-8',8,'Moderately heavy.',['Shoulders','Triceps']), LI('Lateral raise',4,'12-15',9,null,['Shoulders'],'60 sec'), LI('Rear delt fly',3,15,9,null,['Shoulders'],'60 sec'), LI('Incline curl',3,'10-12',9,null,['Biceps'],'60 sec'), LI('Overhead triceps extension',3,'10-12',9,null,['Triceps'],'60 sec') ] },
+        { dow:5, prio:5, focus:'Lower hypertrophy', items:[ LI('Romanian deadlift',3,8,7,'Hamstrings loaded, back neutral.',['Hamstrings','Glutes']), LI('Hip thrust',3,'8-10',8,null,['Glutes','Hamstrings']), LI('Leg curl',3,'10-12',9,null,['Hamstrings'],'60 sec'), LI('Walking lunge',2,'12/leg',8,null,['Quads','Glutes']), LI('Standing calf raise',3,'12-15',9,null,['Calves'],'60 sec') ] },
+        { dow:2, prio:6, focus:'Easy aerobic', items:[ CK('Zone 2 easy', '30 min', 'Conversational pace.', ['Cardio']), MOB(10) ] }
+      ];
     } }
 ];
 
@@ -2805,7 +2842,7 @@ function applyPlanRuns(){
         w.focus = run.mode === 'replace' ? s.focus : w._focus0 + ' + ' + s.focus;
         if (run.mode === 'replace') w.planLabel = `Week ${s.week} · ${run.name}`;
       }
-      w.items = w.items.concat(s.items);
+      w.items = w.items.concat(s.items.map(uItem));
     });
   });
   WORKOUTS.sort((a,b) => a.date.localeCompare(b.date));
@@ -2946,6 +2983,11 @@ function renderSettings(){
       <button class="ghostbtn" id="swTest" style="align-self:flex-start;">Test the timer (5 sec)</button>
     </div>
     <div class="card">
+      <div class="exname">Units</div>
+      <div class="notes">Distances in plans and logging. Lifting weights are in lb for now.</div>
+      <div class="rareas" id="unitPick"><button class="mpick ${isMetric()?'':'on'}" data-unit="imperial">Miles</button><button class="mpick ${isMetric()?'on':''}" data-unit="metric">Kilometers</button></div>
+    </div>
+    <div class="card">
       <div class="exname">Backup</div>
       <div class="notes">Your data lives in your own database. Export a copy any time, or restore one.</div>
       <div class="rbtns"><button class="ghostbtn" id="bkExport">Export backup</button><button class="ghostbtn" id="bkImport">Import backup</button></div>
@@ -2967,6 +3009,11 @@ function renderSettings(){
       <div class="notes">A cairn is a stack of stones that marks the trail. Each logged set is another stone.</div>
     </div>`;
   document.getElementById('swTimer').onclick = (e) => { settings.timer = !settings.timer; saveSettings(); e.currentTarget.classList.toggle('on', settings.timer); };
+  document.querySelectorAll('[data-unit]').forEach(b => b.onclick = () => {
+    settings.units = b.dataset.unit; saveSettings();
+    document.querySelectorAll('[data-unit]').forEach(x => x.classList.toggle('on', x === b));
+    applyPlanRuns(); watchDayLogs(); watchDayEdit();
+  });
   document.getElementById('swSound').onclick = (e) => { settings.sound = !settings.sound; saveSettings(); e.currentTarget.classList.toggle('on', settings.sound); };
   const showDisp = () => {
     const pr = document.createElement('div');
