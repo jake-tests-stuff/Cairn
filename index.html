@@ -423,6 +423,11 @@ table.hist th{ text-transform:none; letter-spacing:0; font-size:12px; }
 .daytitle .wk{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .swatch{ width:38px; height:38px; border-radius:50%; border:3px solid var(--surface); background:var(--sw); box-shadow:0 0 0 1px var(--line); padding:0; }
 .swatch.on{ box-shadow:0 0 0 2px var(--fg); }
+.mynote{ text-align:left; background:color-mix(in srgb,var(--accent) 10%, var(--surface2)); border:none; color:var(--fg); border-radius:12px; padding:10px 12px; font-size:13.5px; line-height:1.4; white-space:pre-wrap; width:100%; }
+.mynote::before{ content:'Your note'; display:block; font-size:11.5px; color:var(--accent); font-weight:600; margin-bottom:2px; }
+.notebtn{ align-self:flex-start; color:var(--faint); }
+.notebox textarea{ width:100%; background:var(--surface2); border:none; border-radius:12px; color:var(--fg); padding:10px 12px; font-size:16px; font-family:inherit; resize:vertical; margin-bottom:8px; }
+.notebox textarea:focus{ outline:none; box-shadow:0 0 0 2px var(--accent); }
 .statrow{ grid-template-columns:1.35fr 1fr 1fr; }
 .stat .sv{ font-size:26px; }
 .setline .exname{ font-family:'Archivo',system-ui,sans-serif; font-size:16px; font-weight:600; text-transform:none; letter-spacing:0; }
@@ -618,6 +623,7 @@ async function init(){
   watchReady();
   watchSkips();
   watchDeload();
+  watchExNotes();
   watchPlanRuns();
   loadReadyWeek();
   loadBench();
@@ -957,6 +963,7 @@ function renderDay(){
         ${setAdjRow}
         ${body}
         ${item.notes ? `<div class="notes">${esc(item.notes)}</div>` : ''}
+        ${exNoteHtml(item.ex)}
         ${editControls}
       </div>`;
   });
@@ -1945,7 +1952,39 @@ function openRecap(){
   };
 }
 
+/* ---- personal notes per exercise (shown every time that exercise appears) ---- */
+let exNotes = {}, exNoteEditing = null;
+const noteKey = (ex) => String(ex||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,80);
+function watchExNotes(){
+  if (!db) return;
+  try{
+    db.collection('exnotes').limit(400).onSnapshot(snap => {
+      exNotes = {}; snap.docs.forEach(d => { const x = d.data(); if (x && x.text) exNotes[d.id] = x; });
+      if (view==='today' && !exNoteEditing) renderDay();
+    }, err => console.warn('notes sub error', err));
+  }catch(e){ console.warn(e); }
+}
+function exNoteHtml(ex){
+  if (offline) return '';
+  const k = noteKey(ex), n = exNotes[k];
+  if (exNoteEditing === k) return `<div class="notebox"><textarea id="noteText" rows="3" placeholder="Cues, setup, what to watch for">${esc(n ? n.text : '')}</textarea><div class="rbtns"><button class="savebtn" id="noteSave" style="flex:none;padding:10px 16px;min-height:42px;font-size:14px;">Save note</button><button class="ghostbtn" id="noteCancel">Cancel</button></div></div>`;
+  return n ? `<button class="mynote" data-notebtn="${k}"><span>${esc(n.text)}</span></button>` : `<button class="ghostbtn notebtn" data-notebtn="${k}">+ Note</button>`;
+}
+function wireNotes(){
+  const main = document.getElementById('main');
+  main.querySelectorAll('[data-notebtn]').forEach(b => b.onclick = () => { exNoteEditing = b.dataset.notebtn; renderDay(); const ta = document.getElementById('noteText'); if (ta){ ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } });
+  const c = document.getElementById('noteCancel'); if (c) c.onclick = () => { exNoteEditing = null; renderDay(); };
+  const s = document.getElementById('noteSave'); if (s) s.onclick = async () => {
+    const k = exNoteEditing, text = document.getElementById('noteText').value.trim();
+    const ex = (dayItems().all.find(it => noteKey(it.ex) === k) || {}).ex || k;
+    exNoteEditing = null;
+    if (text) exNotes[k] = { ex, text }; else delete exNotes[k];
+    try{ if (text) await db.doc('exnotes/'+k).set({ ex, text, updatedAt:new Date().toISOString() }); else await db.doc('exnotes/'+k).delete(); }catch(e){ console.warn('note save failed', e); }
+    renderDay();
+  };
+}
 function wireToday(){
+  wireNotes();
   const main = document.getElementById('main');
   main.querySelectorAll('[data-rkey]').forEach(b => b.onclick = () => setReady(b.dataset.rkey, b.dataset.rval));
   main.querySelectorAll('[data-rarea]').forEach(b => b.onclick = () => toggleArea(b.dataset.rarea));
@@ -1991,7 +2030,7 @@ function beepSrc(){
   const w = (o,s) => { for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
   w(0,'RIFF'); v.setUint32(4,36+n*2,true); w(8,'WAVE'); w(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
   v.setUint32(24,sr,true); v.setUint32(28,sr*2,true); v.setUint16(32,2,true); v.setUint16(34,16,true); w(36,'data'); v.setUint32(40,n*2,true);
-  for (let i=0;i<n;i++){ const t = i/sr, on = (t<0.16) || (t>0.26 && t<0.42); const env = on ? Math.min(1, (t<0.26 ? t : t-0.26)*60) : 0; v.setInt16(44+i*2, Math.sin(2*Math.PI*880*t)*env*9000, true); }
+  for (let i=0;i<n;i++){ const t = i/sr, on = (t<0.16) || (t>0.26 && t<0.42); const env = on ? Math.min(1, (t<0.26 ? t : t-0.26)*60) : 0; v.setInt16(44+i*2, Math.sin(2*Math.PI*880*t)*env*26000, true); }
   let s = ''; const u = new Uint8Array(buf); for (let i=0;i<u.length;i++) s += String.fromCharCode(u[i]);
   return 'data:audio/wav;base64,' + btoa(s);
 }
@@ -3225,7 +3264,7 @@ async function endPlan(id){
 }
 
 /* ================= PLAN: SETTINGS ================= */
-const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist','planRuns'];
+const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist','planRuns','exnotes'];
 async function exportBackup(){
   const msg = document.getElementById('bkMsg');
   if (!db || offline){ msg.textContent = 'Not connected.'; return; }
@@ -3345,6 +3384,7 @@ function renderSettings(){
   document.getElementById('bkImport').onclick = () => document.getElementById('bkFile').click();
   document.getElementById('bkFile').onchange = (e) => { const f = e.target.files[0]; if (f) importBackup(f); e.target.value = ''; };
   document.getElementById('swTest').onclick = () => {
+    primeBeep();
     restT = { end: Date.now()+5000, total: 5, label: 'Timer test', fired:false };
     if (!restInt) restInt = setInterval(tickRest, 250);
     tickRest();
