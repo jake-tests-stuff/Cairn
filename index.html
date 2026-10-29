@@ -54,6 +54,7 @@
 
 *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
 html,body{ height:100%; }
+html{ background:var(--bg); }
 body{
   background:var(--bg); color:var(--fg);
   font-family:'Archivo', system-ui, sans-serif;
@@ -74,8 +75,8 @@ input[type=number]{ -moz-appearance:textfield; }
 
 /* ---- header ---- */
 .topbar{
-  position:sticky; top:env(safe-area-inset-top,0px); z-index:10;
-  background:var(--bg); padding-block:12px 8px; margin-inline:-16px; padding-inline:16px;
+  position:sticky; top:0; z-index:10;
+  background:var(--bg); padding-block:calc(12px + env(safe-area-inset-top,0px)) 8px; margin-inline:-16px; padding-inline:16px;
   border-bottom:1px solid var(--line);
 }
 .daynav{ display:flex; align-items:center; gap:10px; }
@@ -332,7 +333,7 @@ main > .notes, .subbody > .notes{ color:var(--muted); font-size:13px; }
 
 </style>
 <style>
-#gate{ position:fixed; inset:0; z-index:100; background:var(--bg); display:none; align-items:center; justify-content:center; padding:24px; }
+#gate{ position:fixed; inset:0; padding-top:env(safe-area-inset-top,0px); z-index:100; background:var(--bg); display:none; align-items:center; justify-content:center; padding:24px; }
 .gatebox{ display:flex; flex-direction:column; align-items:center; gap:14px; text-align:center; max-width:320px; }
 #gateLogo .clogo{ width:72px; height:72px; }
 .gatetitle{ font-family:"Big Shoulders",sans-serif; font-weight:700; font-size:40px; letter-spacing:.08em; text-transform:uppercase; color:var(--fg); }
