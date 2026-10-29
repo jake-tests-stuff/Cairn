@@ -53,8 +53,8 @@
 }
 
 *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-html,body{ height:100%; }
-html{ background:var(--bg); }
+html{ height:100%; background:var(--bg); }
+body{ min-height:calc(100% + 2px); }
 body{
   background:var(--bg); color:var(--fg);
   font-family:'Archivo', system-ui, sans-serif;
@@ -2581,6 +2581,13 @@ function fixViewport(){
   }catch(e){}
   document.documentElement.style.setProperty('--vgap', gap + 'px');
 }
+/* iOS home-screen apps use a shorter viewport while scrolled exactly to the top; sitting 1px down avoids it */
+function nudgeScroll(){ try{ if (window.scrollY < 1 && document.documentElement.scrollHeight > innerHeight) window.scrollTo(0,1); }catch(e){} }
+window.addEventListener('scroll', () => { if (window.scrollY < 1) nudgeScroll(); }, { passive:true });
+['load','pageshow','focus','orientationchange'].forEach(ev => window.addEventListener(ev, () => setTimeout(nudgeScroll, 50)));
+document.addEventListener('visibilitychange', () => setTimeout(nudgeScroll, 50));
+setInterval(nudgeScroll, 1500);
+setTimeout(nudgeScroll, 200);
 fixViewport();
 ['resize','orientationchange','pageshow','focus'].forEach(ev => window.addEventListener(ev, fixViewport));
 document.addEventListener('visibilitychange', fixViewport);
