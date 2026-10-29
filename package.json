@@ -1,0 +1,1 @@
+{ "name": "cairn", "private": true, "scripts": { "build": "esbuild src/db.js --bundle --minify --format=iife --outfile=cairn-db.js" }, "dependencies": { "firebase": "^10.14.1" }, "devDependencies": { "esbuild": "^0.24.0" } }
