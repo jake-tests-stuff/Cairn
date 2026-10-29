@@ -445,6 +445,11 @@ table.hist th{ text-transform:none; letter-spacing:0; font-size:12px; }
 .bxrow input[type=number]{ text-align:center; }
 .bxrow input:focus, .bfield input:focus{ outline:none; box-shadow:0 0 0 2px var(--accent); }
 .bsel{ width:auto; min-height:34px; padding:6px 12px; border-radius:20px; font-size:13px; background:transparent; border:1px solid var(--line); color:var(--muted); }
+.exrow{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+.exrow:last-child{ border-bottom:none; }
+.exrow .ghostbtn{ white-space:nowrap; flex:none; }
+.exrn{ font-size:15.5px; font-weight:600; }
+.exrm{ font-size:12.5px; color:var(--muted); margin-top:1px; }
 .statrow{ grid-template-columns:1.35fr 1fr 1fr; }
 .stat .sv{ font-size:26px; }
 .setline .exname{ font-family:'Archivo',system-ui,sans-serif; font-size:16px; font-weight:600; text-transform:none; letter-spacing:0; }
@@ -642,6 +647,7 @@ async function init(){
   watchDeload();
   watchExNotes();
   watchCustom();
+  watchUserEx();
   watchPlanRuns();
   loadReadyWeek();
   loadBench();
@@ -763,6 +769,7 @@ function renderShell(){
       </div>
     </div>
     <main id="main"></main>
+    <datalist id="exnames"></datalist>
     <div class="restbar" id="restbar" hidden><div class="rfill" id="rFill"></div><div class="rin"><div class="rlab">Rest · <span id="rLabel"></span></div><div class="rtime tabular" id="rTime"></div><button class="rbtn2" id="rPlus">+30s</button><button class="rbtn2" id="rSkip">Skip</button></div></div>
     <div class="sheet" id="sheet" hidden></div>
     <nav class="tabbar">
@@ -1004,7 +1011,7 @@ function addFormHtml(){
         <button class="addbtn" id="saveTpl">Save today as a template</button>` : `
         <div class="exhead"><div class="exname">Add exercise</div></div>
         <div class="addfields">
-          <input id="addEx" type="text" placeholder="Exercise name" maxlength="60">
+          <input id="addEx" type="text" list="exnames" placeholder="Exercise name" maxlength="60" autocomplete="off">
           <div class="addrow3">
             <input id="addSets" type="number" inputmode="numeric" placeholder="Sets">
             <input id="addReps" type="number" inputmode="numeric" placeholder="Reps">
@@ -1031,6 +1038,12 @@ function wireAddForm(){
   if (cancelBtn) cancelBtn.onclick = () => { showAddForm = false; renderDay(); };
   const pickWrap = document.getElementById('muscPick');
   const picked = new Set();
+  const addEx = document.getElementById('addEx');
+  if (addEx && pickWrap) addEx.addEventListener('input', () => {
+    const e = libLookup(addEx.value); if (!e) return;
+    picked.clear(); e.p.concat(e.s).forEach(m => picked.add(m));
+    pickWrap.querySelectorAll('.mpick').forEach(b => b.classList.toggle('on', picked.has(b.dataset.m)));
+  });
   if (pickWrap){
     pickWrap.querySelectorAll('.mpick').forEach(btn => {
       btn.onclick = () => { btn.classList.toggle('on'); const m=btn.dataset.m; picked.has(m)?picked.delete(m):picked.add(m); };
@@ -1047,6 +1060,7 @@ function wireAddForm(){
       const tw = twv === '' ? null : Number(twv);
       const id = 'c'+Date.now();
       dayEdit.custom = (dayEdit.custom||[]).concat([{ id, ex, sets, reps, tw, muscles: Array.from(picked) }]);
+      rememberExercise(ex, Array.from(picked));
       showAddForm = false;
       await saveDayEdit();
       renderDay();
@@ -1085,6 +1099,7 @@ function wireEditControls(){
   if (openBtn) openBtn.onclick = () => { showAddForm = true; renderDay(); };
   const ot2 = document.getElementById('openTpl'); if (ot2) ot2.onclick = openTemplatePicker;
   const st2 = document.getElementById('saveTpl'); if (st2) st2.onclick = openSaveTemplate;
+  wireAddForm(); // the add form's Add / Cancel / muscle buttons were only wired on empty days before
 }
 
 function wireDayInputs(){
@@ -1574,7 +1589,7 @@ function renderMaxes(){
 const SUBS = {
   progress: [['week','Week'],['history','Lifts'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
-  plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['settings','Settings']]
+  plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['exercises','Exercises'],['settings','Settings']]
 };
 const VIEW_TITLES = { progress:'Progress', body:'Body', plan:'Plan' };
 let subs = { progress:'week', body:'readiness', plan:'maxes' };
@@ -1640,6 +1655,7 @@ function renderSubView(){
   else if (s==='maxes') renderMaxes();
   else if (s==='roadmap') mainEl().innerHTML = planRoadmapHtml();
   else if (s==='plans') renderPlans();
+  else if (s==='exercises') renderExercises();
   else if (s==='settings') renderSettings();
 }
 
@@ -2229,7 +2245,7 @@ async function renderVolume(){
       snap.docs.forEach(d => {
         const x = d.data();
         if (!x || x.date>end) return;
-        const ms = MUSCLE_MAP[x.exercise] || [];
+        const ms = MUSCLE_MAP[x.exercise] || libMuscles(x.exercise) || [];
         if (x.sets && !isWarm(x.exercise)){
           const n = x.sets.filter(s => s && s.done).length;
           ms.forEach(m => { done[m] = (done[m]||0) + n; });
@@ -3346,6 +3362,223 @@ async function endPlan(id){
 }
 
 
+/* ================= EXERCISE LIBRARY ================= */
+const EX_LIB_RAW = `Back squat|Quads,Glutes|Core,Back
+Front squat|Quads|Glutes,Core
+Box squat|Quads,Glutes|Core
+Paused squat|Quads,Glutes|Core
+Goblet squat|Quads|Glutes,Core
+Hack squat|Quads|Glutes
+Leg press|Quads|Glutes
+Bulgarian split squat|Quads,Glutes|Core
+Walking lunge|Quads,Glutes|Hamstrings
+Reverse lunge|Quads,Glutes|Hamstrings
+Step-up|Quads,Glutes|Calves
+Leg extension|Quads|
+Sissy squat|Quads|Core
+Belt squat|Quads,Glutes|
+Wall sit|Quads|Core
+Conventional deadlift|Hamstrings,Glutes,Back|Grip,Core
+Sumo deadlift|Glutes,Quads|Hamstrings,Back,Grip
+Trap bar deadlift|Quads,Glutes,Hamstrings|Back,Grip
+Romanian deadlift|Hamstrings,Glutes|Back,Grip
+Stiff-leg deadlift|Hamstrings|Glutes,Back
+Deficit deadlift|Hamstrings,Glutes,Back|Quads,Grip
+Rack pull|Back,Glutes|Hamstrings,Grip
+Good morning|Hamstrings,Back|Glutes
+Hip thrust|Glutes|Hamstrings
+Glute bridge|Glutes|Hamstrings
+Cable pull-through|Glutes,Hamstrings|
+Back extension|Back,Glutes|Hamstrings
+Kettlebell swing|Glutes,Hamstrings|Core,Grip
+Single-leg Romanian deadlift|Hamstrings,Glutes|Core
+Lying leg curl|Hamstrings|Calves
+Seated leg curl|Hamstrings|Calves
+Nordic hamstring curl|Hamstrings|Calves
+Glute-ham raise|Hamstrings,Glutes|Back
+Cable kickback|Glutes|
+Hip abduction machine|Glutes|
+Standing calf raise|Calves|
+Seated calf raise|Calves|
+Donkey calf raise|Calves|
+Tibialis raise|Calves|
+Bench press|Chest,Triceps|Shoulders
+Close-grip bench press|Triceps,Chest|Shoulders
+Spoto press|Chest,Triceps|Shoulders
+Pause bench press|Chest,Triceps|Shoulders
+Incline bench press|Chest,Shoulders|Triceps
+Incline dumbbell press|Chest,Shoulders|Triceps
+Dumbbell bench press|Chest|Triceps,Shoulders
+Machine chest press|Chest|Triceps,Shoulders
+Floor press|Chest,Triceps|Shoulders
+Decline press|Chest|Triceps
+Push-up|Chest|Triceps,Shoulders,Core
+Weighted dip|Chest,Triceps|Shoulders
+Cable fly|Chest|Shoulders
+Dumbbell fly|Chest|Shoulders
+Pec deck|Chest|Shoulders
+Svend press|Chest|Shoulders
+Barbell overhead press|Shoulders|Triceps,Core
+Dumbbell overhead press|Shoulders|Triceps
+Seated dumbbell press|Shoulders|Triceps
+Landmine press|Shoulders|Chest,Triceps,Core
+Arnold press|Shoulders|Triceps
+Push press|Shoulders,Triceps|Quads
+Lateral raise|Shoulders|
+Cable lateral raise|Shoulders|
+Front raise|Shoulders|Chest
+Rear delt fly|Shoulders|Back
+Face pull|Shoulders,Back|
+Upright row|Shoulders|Biceps,Back
+Band pull-apart|Shoulders,Back|
+Shrug|Back|Grip,Shoulders
+Barbell row|Back|Biceps,Grip,Core
+Pendlay row|Back|Biceps,Hamstrings
+Chest-supported row|Back|Biceps,Shoulders
+Seated cable row|Back|Biceps
+One-arm dumbbell row|Back|Biceps,Grip
+T-bar row|Back|Biceps,Grip
+Meadows row|Back|Biceps,Grip
+Inverted row|Back|Biceps,Core
+Pull-up|Back,Biceps|Grip,Core
+Weighted pull-up|Back,Biceps|Grip,Core
+Chin-up|Biceps,Back|Grip
+Lat pulldown|Back|Biceps
+Close-grip pulldown|Back|Biceps
+Straight-arm pulldown|Back|Core
+Machine row|Back|Biceps
+Barbell curl|Biceps|Grip
+Dumbbell curl|Biceps|Grip
+Hammer curl|Biceps|Grip
+Incline dumbbell curl|Biceps|
+Preacher curl|Biceps|
+Cable curl|Biceps|
+Concentration curl|Biceps|
+Triceps pushdown|Triceps|
+Rope pushdown|Triceps|
+Skull crusher|Triceps|
+Overhead triceps extension|Triceps|
+Close-grip push-up|Triceps|Chest,Shoulders
+Bench dip|Triceps|Chest,Shoulders
+Plank|Core|Shoulders
+Side plank|Core|Glutes
+Ab wheel rollout|Core|Shoulders
+Hanging leg raise|Core|Grip
+Hanging knee raise|Core|Grip
+Cable crunch|Core|
+Decline sit-up|Core|
+Dead bug|Core|
+Bird dog|Core|Glutes,Back
+Pallof press|Core|Shoulders
+Cable woodchop|Core|Shoulders
+Copenhagen plank|Core|Glutes
+Russian twist|Core|
+Suitcase carry|Core,Grip|Shoulders
+Farmer carry|Grip,Core|Back,Shoulders
+Dead hang|Grip|Shoulders,Back
+Plate pinch|Grip|
+Wrist curl|Grip|Biceps
+Reverse wrist curl|Grip|
+Sled push|Quads,Glutes|Calves,Cardio
+Sled pull|Hamstrings,Glutes|Back,Cardio
+Sandbag carry|Core,Grip|Back,Quads
+Sandbag over shoulder|Back,Glutes|Core,Grip
+Burpee|Cardio|Chest,Quads,Core
+Box jump|Quads,Glutes|Calves,Cardio
+Broad jump|Quads,Glutes|Calves
+Medicine ball slam|Core,Shoulders|Cardio
+Battle ropes|Shoulders,Cardio|Core
+Zone 2 run|Cardio|Quads,Calves
+Easy bike|Cardio|Quads
+Rowing machine|Cardio|Back,Quads
+Swim|Cardio|Shoulders,Back
+Ruck|Cardio|Quads,Glutes,Back
+Incline walk|Cardio|Glutes,Calves
+Sprint intervals|Cardio|Hamstrings,Glutes
+Jump rope|Cardio|Calves
+Stair climber|Cardio|Quads,Glutes
+Hip 90/90|Mobility|Glutes
+Couch stretch|Mobility|Quads
+World's greatest stretch|Mobility|Hamstrings,Glutes
+Thoracic rotation|Mobility|Back
+Cat-cow|Mobility|Back,Core
+Deep squat hold|Mobility|Quads,Glutes
+Ankle rocks|Mobility|Calves
+Shoulder dislocates|Mobility|Shoulders
+Foam roll|Mobility|`;
+const EX_LIB = EX_LIB_RAW.split('\n').map(l => { const [n, p, s] = l.split('|'); return { n, p: p ? p.split(',') : [], s: s ? s.split(',').filter(Boolean) : [] }; });
+const EX_BY_NAME = {}; EX_LIB.forEach(e => { EX_BY_NAME[e.n.toLowerCase()] = e; });
+let userEx = {}; // exercises you typed yourself: { slug: { name, muscles } }
+function watchUserEx(){
+  if (!db) return;
+  try{
+    db.collection('exlib').limit(400).onSnapshot(snap => {
+      userEx = {}; snap.docs.forEach(d => { const x = d.data(); if (x && x.name) userEx[d.id] = x; });
+      fillExList();
+      if (view==='plan' && curSub()==='exercises') drawExercises();
+    }, err => console.warn('exlib sub error', err));
+  }catch(e){ console.warn(e); }
+}
+function libLookup(name){
+  const k = String(name||'').trim().toLowerCase(); if (!k) return null;
+  if (EX_BY_NAME[k]) return EX_BY_NAME[k];
+  const u = Object.values(userEx).find(x => x.name.toLowerCase() === k);
+  return u ? { n:u.name, p:u.muscles || [], s:[] } : null;
+}
+function libMuscles(name){ const e = libLookup(name); return e ? e.p.concat(e.s) : null; }
+function allExercises(){
+  const seen = new Set(EX_LIB.map(e => e.n.toLowerCase()));
+  return EX_LIB.concat(Object.values(userEx).filter(u => !seen.has(u.name.toLowerCase())).map(u => ({ n:u.name, p:u.muscles || [], s:[], mine:true })));
+}
+function fillExList(){
+  const dl = document.getElementById('exnames'); if (!dl) return;
+  dl.innerHTML = allExercises().map(e => `<option value="${esc(e.n)}"></option>`).join('');
+}
+async function rememberExercise(name, muscles){
+  const n = String(name||'').trim(); if (!n || libLookup(n) || !db) return;
+  const id = slug(n); const doc = { name:n, muscles: muscles || inferMuscles(n), createdAt:new Date().toISOString() };
+  userEx[id] = doc; fillExList();
+  try{ await db.doc('exlib/'+id).set(doc); }catch(e){ console.warn('exlib save failed', e); }
+}
+
+let exMuscle = 'Chest', exQuery = '';
+function renderExercises(){
+  const main = mainEl();
+  main.innerHTML = `
+    <div class="notes">Browse by muscle. An exercise shows under its main muscle first, then under the others it also works.</div>
+    <div class="bfield"><input id="exSearch" type="search" placeholder="Search all exercises" value="${esc(exQuery)}" style="background:var(--surface2);border:none;border-radius:12px;padding:10px 14px;min-height:44px;color:var(--fg);width:100%;font-size:16px;"></div>
+    <div class="plannav" id="exMus">${MUSCLE_TAGS.map(m => `<button class="mpick ${exMuscle===m?'on':''}" data-exm="${m}">${m}</button>`).join('')}</div>
+    <div id="exBody" class="subbody"></div>`;
+  document.getElementById('exSearch').oninput = (e) => { exQuery = e.target.value; drawExercises(); };
+  document.querySelectorAll('[data-exm]').forEach(b => b.onclick = () => { exMuscle = b.dataset.exm; exQuery = ''; document.getElementById('exSearch').value = ''; document.querySelectorAll('[data-exm]').forEach(x => x.classList.toggle('on', x === b)); drawExercises(); });
+  drawExercises();
+}
+function drawExercises(){
+  const body = document.getElementById('exBody'); if (!body) return;
+  const row = (e, role) => `<div class="exrow"><div><div class="exrn">${esc(e.n)}${e.mine ? ' <span class="chip">yours</span>' : ''}</div><div class="exrm">${role === 'secondary' ? 'Secondary here. Main: ' + esc(e.p.join(', ') || '-') : esc(e.p.join(', ')) + (e.s.length ? ' <span style="opacity:.7">· also ' + esc(e.s.join(', ')) + '</span>' : '')}</div></div>${view==='plan' && WORKOUTS[curIdx] ? `<button class="ghostbtn" data-exadd="${esc(e.n)}">Add to today</button>` : ''}</div>`;
+  let html = '';
+  const q = exQuery.trim().toLowerCase();
+  const all = allExercises();
+  if (q){
+    const hits = all.filter(e => e.n.toLowerCase().includes(q) || e.p.concat(e.s).some(m => m.toLowerCase().includes(q)));
+    html = hits.length ? hits.map(e => row(e, 'primary')).join('') : '<div class="notes">No match. You can still type any name when you add an exercise, and Cairn will remember it.</div>';
+  } else {
+    const prim = all.filter(e => e.p.includes(exMuscle)), sec = all.filter(e => !e.p.includes(exMuscle) && e.s.includes(exMuscle));
+    html = `<div class="jlabel">Main work for ${esc(exMuscle.toLowerCase())} (${prim.length})</div>` + (prim.map(e => row(e, 'primary')).join('') || '<div class="notes">None yet.</div>')
+      + (sec.length ? `<div class="jlabel" style="margin-top:10px;">Also works ${esc(exMuscle.toLowerCase())} (${sec.length})</div>` + sec.map(e => row(e, 'secondary')).join('') : '');
+  }
+  body.innerHTML = `<div class="card" style="gap:2px;">${html}</div>`;
+  body.querySelectorAll('[data-exadd]').forEach(b => b.onclick = async () => {
+    const e = libLookup(b.dataset.exadd); if (!e) return;
+    const w = WORKOUTS[curIdx]; const today = todayStr();
+    const target = WORKOUTS.find(x => x.date === today) || w;
+    if (target !== w){ curIdx = WORKOUTS.indexOf(target); watchDayLogs(); watchDayEdit(); }
+    dayEdit.custom = (dayEdit.custom||[]).concat([{ id:'c'+Date.now(), ex:e.n, sets:3, reps:10, tw:null, muscles:e.p.concat(e.s) }]);
+    await saveDayEdit();
+    b.textContent = 'Added'; b.disabled = true;
+  });
+}
+
 /* ================= TEMPLATES + CUSTOM PLANS ================= */
 let templates = {}, customPlans = {};
 function watchCustom(){
@@ -3357,6 +3590,7 @@ function watchCustom(){
 }
 function inferMuscles(name){
   if (MUSCLE_MAP[name]) return MUSCLE_MAP[name];
+  { const lm = libMuscles(name); if (lm && lm.length) return lm; }
   const n = String(name||'').toLowerCase(), m = [];
   const rules = [
     [/squat|leg press|lunge|split squat|leg ext|step.?up|sled/, ['Quads','Glutes']],
@@ -3440,7 +3674,7 @@ function builderHtml(){
     return `<div class="card">
       <div class="exhead"><div class="exname">${['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][i]}</div></div>
       <div class="bfield"><label>Name for the day (optional)</label><input type="text" maxlength="40" placeholder="e.g. Push, Legs, Long run" value="${esc(day.focus)}" data-bf="${i}"></div>
-      ${day.items.map((it, n) => `<div class="bxrow"><input type="text" maxlength="60" placeholder="Exercise" value="${esc(it.ex)}" data-bex="${i}:${n}"><input type="number" inputmode="numeric" placeholder="Sets" value="${esc(it.sets)}" data-bsets="${i}:${n}"><input type="text" placeholder="Reps or time" value="${esc(it.reps)}" data-breps="${i}:${n}"><button class="ghostbtn" data-brm="${i}:${n}" aria-label="Remove">&times;</button></div>`).join('')}
+      ${day.items.map((it, n) => `<div class="bxrow"><input type="text" list="exnames" autocomplete="off" maxlength="60" placeholder="Exercise" value="${esc(it.ex)}" data-bex="${i}:${n}"><input type="number" inputmode="numeric" placeholder="Sets" value="${esc(it.sets)}" data-bsets="${i}:${n}"><input type="text" placeholder="Reps or time" value="${esc(it.reps)}" data-breps="${i}:${n}"><button class="ghostbtn" data-brm="${i}:${n}" aria-label="Remove">&times;</button></div>`).join('')}
       <div class="rbtns"><button class="ghostbtn" data-badd="${i}">+ Exercise</button>${tplOpts ? `<select class="bsel" data-bsel="${i}"><option value="">Add saved workout</option>${tplOpts}</select>` : ''}</div>
     </div>`; }).join('');
   return `
@@ -3503,6 +3737,7 @@ async function saveBuilder(){
     if (items.length) days.push({ dow:i, focus: day.focus.trim(), items });
   });
   if (!days.length){ b.msg = 'Add at least one training day with an exercise.'; document.getElementById('bMsg').textContent = b.msg; return; }
+  days.forEach(d => d.items.forEach(it => rememberExercise(it.ex)));
   const name = b.name.trim() || 'My plan';
   const id = b.id || (slug(name) + '-' + Date.now().toString(36));
   const doc = { id, name, weeks:b.weeks, mode:b.mode, deload:b.deload, days, updatedAt:new Date().toISOString() };
@@ -3512,7 +3747,7 @@ async function saveBuilder(){
 }
 
 /* ================= PLAN: SETTINGS ================= */
-const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist','planRuns','exnotes','templates','customPlans'];
+const BACKUP_COLLS = ['logs','dayEdits','state','readiness','sessions','bodyweight','functional','flares','skips','sticking','maxhist','planRuns','exnotes','templates','customPlans','exlib'];
 async function exportBackup(){
   const msg = document.getElementById('bkMsg');
   if (!db || offline){ msg.textContent = 'Not connected.'; return; }
