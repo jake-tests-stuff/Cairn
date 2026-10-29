@@ -2091,7 +2091,7 @@ function wireToday(){
 }
 
 /* ================= PUSH (locked-screen alerts via the Cloudflare worker) ================= */
-const PUSH_URL = '';   /* set to your worker address, e.g. https://cairn-push.NAME.workers.dev */
+const PUSH_URL = 'https://cairn.jakebentley0330.workers.dev';   /* set to your worker address, e.g. https://cairn-push.NAME.workers.dev */
 const VAPID_PUB = 'BCNEidd2FCukumAkMttmdGOTbm_VTimoUbJecCr1iuLGpz2G5_0cWw9_CQAU1pLKkuSQ7eJTr86EWLlBiOAW8xY';
 const pushPrefs = () => Object.assign({ rest:true, morning:false, morningTime:'06:30', weekly:false, weeklyTime:'19:00' }, (settings.push||{}));
 function pushSupported(){ return !!(PUSH_URL && 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window); }
