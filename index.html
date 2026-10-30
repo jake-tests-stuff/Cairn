@@ -2029,7 +2029,7 @@ const e1rm = (w, r) => r === 1 ? w : w * (1 + r/30);
 async function findPRs(w){
   if (offline || !db) return [];
   const { all } = dayItems();
-  const out = [];
+  const out = []; out.stale = [];
   for (const it of all){
     if (it.hidden || it.sets == null || isWarm(it.ex)) continue;
     const log = logDoc[it.k]; if (!log || !log.sets) continue;
@@ -2039,15 +2039,15 @@ async function findPRs(w){
       if (!(s && s.done) || !(wt > 0) || !(r >= 1 && r <= 12)) return;
       const e = e1rm(wt, r); if (!best || e > best.e) best = { e, w:wt, r };
     });
-    if (!best) continue;
+    if (!best){ if (log.pr) out.stale.push(it.k); continue; }
     let prior = 0;
     try{
       const snap = await db.collection('logs').where('exercise','==',it.ex).where('date','<',w.date).orderBy('date','desc').limit(100).get();
       snap.docs.forEach(d => { ((d.data() || {}).sets || []).forEach(s => { const wt = Number(s && s.w), r = Number(s && s.r); if (s && s.done && wt > 0 && r >= 1 && r <= 12) prior = Math.max(prior, e1rm(wt, r)); }); });
     }catch(e){ continue; }
-    if (!prior) continue;
+    if (!prior){ if (log.pr) out.stale.push(it.k); continue; }
     const now = Math.round(best.e), before = Math.round(prior);
-    if (now <= before) continue;
+    if (now <= before){ if (log.pr) out.stale.push(it.k); continue; }
     if (log.pr && log.pr.e1 >= now) continue;   /* already celebrated */
     out.push({ k: it.k, ex: it.ex.replace(/\s*\((PRIMARY|secondary)\)/i, ''), w: best.w, r: best.r, e1: now, prev: before });
   }
@@ -2056,6 +2056,13 @@ async function findPRs(w){
 async function celebratePRs(w){
   let list = [];
   try{ list = await findPRs(w); }catch(e){ return; }
+  /* a PR tag from an earlier save that the numbers no longer support is removed */
+  for (const k of (list.stale || [])){
+    const body = Object.assign({}, logDoc[k]); delete body.pr; body.updatedAt = new Date().toISOString();
+    logDoc[k] = body;
+    try{ await db.collection('logs').doc(w.date+'__'+k).set(body); }catch(e){}
+  }
+  if ((list.stale || []).length && view === 'today') renderDay();
   if (!list.length) return;
   for (const x of list){
     const body = Object.assign({}, logDoc[x.k], { pr: { e1:x.e1, prev:x.prev, w:x.w, r:x.r }, updatedAt:new Date().toISOString() });
@@ -4051,6 +4058,7 @@ function renderSettings(){
       <div class="notes">Accent color, then Light or Dark. System follows your iPhone.</div>
       <div class="rareas" id="accentPick">${Object.entries(ACCENTS).map(([k,a]) => `<button class="swatch ${settings.accent===k?'on':''}" data-accent="${k}" aria-label="${a.n}" style="--sw:${a.d || '#E0A233'}"></button>`).join('')}</div>
       <div class="rareas" id="themePick">${[['system','System'],['light','Light'],['dark','Dark']].map(([k,l]) => `<button class="mpick ${settings.theme===k?'on':''}" data-theme-pick="${k}">${l}</button>`).join('')}</div>
+      <button class="ghostbtn" id="prPreview" style="align-self:flex-start;">Preview PR celebration</button>
     </div>
     <div class="card">
       <div class="exname">Barbell</div>
@@ -4134,6 +4142,7 @@ function renderSettings(){
   document.getElementById('bkImport').onclick = () => document.getElementById('bkFile').click();
   document.getElementById('bkFile').onchange = (e) => { const f = e.target.files[0]; if (f) importBackup(f); e.target.value = ''; };
   drawPushCard();
+  document.getElementById('prPreview').onclick = () => showPRCard([{ ex:'Deadlift', w:295, r:5, e1:344, prev:333 }, { ex:'Bench press', w:205, r:5, e1:239, prev:234 }]);
   document.getElementById('swTest').onclick = () => {
     primeBeep();
     restT = { end: Date.now()+5000, total: 5, label: 'Timer test', fired:false };
