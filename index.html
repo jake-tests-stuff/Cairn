@@ -1076,6 +1076,7 @@ function renderDay(){
         ${item.custom ? '<span class="customtag">CUSTOM</span>' : ''}
         <button class="ghostbtn" data-hide="${item.k}" ${item.custom ? 'hidden' : ''}>${item.hidden ? 'Unhide' : 'Hide today'}</button>
         ${item.custom ? `<button class="ghostbtn danger" data-remove="${item.customId}">Remove</button>` : ''}
+        ${!item.custom && item.sets != null && !isWarm(item.ex) ? `<button class="ghostbtn" data-swapx="${item.k}">Swap exercise</button>` : ''}
         ${(() => { const s = ssInfo(item.k); return s && s.canLink ? `<button class="ghostbtn" data-link="${item.k}">${s.linked ? 'Unlink superset' : 'Superset with next'}</button>` : ''; })()}
       </div>` : '';
 
@@ -1189,6 +1190,7 @@ function wireEditControls(){
       renderDay();
     };
   });
+  document.querySelectorAll('[data-swapx]').forEach(btn => { btn.onclick = () => openSwapSheet(btn.dataset.swapx); });
   document.querySelectorAll('[data-remove]').forEach(btn => {
     btn.onclick = async () => {
       const id = btn.dataset.remove;
@@ -2373,6 +2375,36 @@ async function doSwap(key, idx){
   dayEdit.custom = (dayEdit.custom||[]).concat([{ id:'c'+Date.now(), ex:s.to, sets:it.sets||null, reps:it.reps||null, tw:null, rpe:it.rpe||null, notes:s.note, muscles:s.muscles }]);
   await saveDayEdit();
   renderDay();
+}
+
+/* ---- swap any planned exercise for something else, for today only ---- */
+function openSwapSheet(key){
+  const it = findItem(key); if (!it) return;
+  const base = it.ex.replace(/\s*\(.*\)/,'');
+  const mine = new Set((musclesFor(it) || []).slice(0, 2));
+  let q = '', all = false;
+  const draw = () => {
+    const ql = q.trim().toLowerCase();
+    const list = allExercises().filter(e => e.n.toLowerCase() !== base.toLowerCase() && !/stretch|foam roll|mobility/i.test(e.n) && (!ql || e.n.toLowerCase().includes(ql)) && (all || ql || !mine.size || e.p.some(m => mine.has(m)))).slice(0, 40);
+    document.getElementById('swList').innerHTML = list.map((e, i) => `<button class="ghostbtn swrow" data-i="${i}" style="text-align:left;">${esc(e.n)} <span class="notes">${esc(e.p.join(', '))}</span></button>`).join('') + (ql ? `<button class="ghostbtn swrow" data-own="1" style="text-align:left;">Use "${esc(q.trim())}"</button>` : '') || '<div class="notes">No match. Type a name to use it.</div>';
+    document.querySelectorAll('#swList .swrow').forEach(b => b.onclick = () => pick(b.dataset.own ? { n:q.trim(), p:[...mine] } : list[Number(b.dataset.i)]));
+  };
+  const pick = async (e) => {
+    const hid = (dayEdit.hidden||[]).slice(), hideKey = k => { if (hid.indexOf(k)<0) hid.push(k); };
+    hideKey(it.k); dayEdit.all_ = null;
+    dayItems().all.forEach(x => { if (x.ex === base+' — warm-up') hideKey(x.k); });
+    dayEdit.hidden = hid;
+    dayEdit.custom = (dayEdit.custom||[]).concat([{ id:'c'+Date.now(), ex:e.n, sets:it.sets||null, reps:it.reps||null, tw:null, rpe:it.rpe||null, notes:'Swapped in for ' + base + '.', muscles: (e.p && e.p.length ? e.p.concat(e.s||[]) : [...mine]) }]);
+    await saveDayEdit(); closeSheet(); renderDay();
+  };
+  openSheet(`<div><div class="brand">SWAP FOR TODAY</div><h2 style="font-size:22px;">${esc(base)}</h2><div class="notes">Replaces it for today only. Your program is unchanged.</div></div>
+    <input id="swQ" type="text" placeholder="Search or type your own" autocomplete="off" style="width:100%;">
+    <div class="addbtnrow"><button class="ghostbtn" id="swAll">Show all muscles</button><button class="ghostbtn" id="swClose">Cancel</button></div>
+    <div id="swList" style="display:flex;flex-direction:column;gap:8px;"></div>`);
+  document.getElementById('swQ').oninput = ev => { q = ev.target.value; draw(); };
+  document.getElementById('swAll').onclick = () => { all = !all; document.getElementById('swAll').textContent = all ? 'Same muscles only' : 'Show all muscles'; draw(); };
+  document.getElementById('swClose').onclick = closeSheet;
+  draw();
 }
 
 /* ---- weekly pattern suggestion ---- */
