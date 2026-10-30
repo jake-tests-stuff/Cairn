@@ -303,6 +303,7 @@ body.restshown main{ padding-bottom:150px; }
 .sheetin{ background:var(--bg); border-top:1px solid var(--line); border-radius:16px 16px 0 0; width:100%; max-width:560px; max-height:88vh; overflow:auto; padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px)); display:flex; flex-direction:column; gap:14px; color:var(--fg); }
 #stList,#skList,#flList{ display:flex; flex-direction:column; gap:8px; }
 .skipcard{ border-color:var(--warn); }
+.gstack > * + *{ margin-top:10px; } .gstack > .jlabel{ margin-top:14px; margin-bottom:-4px; }
 .statrow{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
 .stat{ background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:10px 12px; min-width:0; }
 .stat .sv{ font-family:'Big Shoulders', system-ui, sans-serif; font-weight:700; font-size:24px; line-height:1.1; }
@@ -1459,7 +1460,7 @@ const dayDiff = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + '
 async function renderGoals(){
   const main = mainEl();
   if (curSub() !== 'goals') return;
-  main.innerHTML = '<div id="goalBody"><div class="notes">Loading...</div></div>';
+  main.innerHTML = '<div id="goalBody" class="gstack"><div class="notes">Loading...</div></div>';
   if (offline || !db){ document.getElementById('goalBody').innerHTML = '<div class="notes">Not connected.</div>'; return; }
   let race = Object.assign({}, RACE_DEFAULT), d;
   try{ const g = await db.doc('state/goals').get(); if (g.exists) goals = Object.assign({}, GOAL_DEFAULT, g.data()); }catch(e){}
@@ -1483,7 +1484,7 @@ async function renderGoals(){
     <div class="card"><div class="exhead"><div class="exname">${esc(race.name)}</div><div class="chips"><span class="chip">${esc(race.place || '')}</span></div></div>
       <div class="statrow">
         <div class="stat"><div class="sv tabular">${toRace > 0 ? toRace : 0}</div><div class="sl">To race day</div></div>
-        <div class="stat"><div class="sv tabular">${toPlan > 0 ? toPlan : 'Now'}</div><div class="sl">${toPlan > 0 ? 'To plan start' : 'Plan window'}</div></div>
+        <div class="stat"><div class="sv tabular">${toPlan > 0 ? toPlan : 'Now'}</div><div class="sl">${toPlan > 0 ? 'To plan' : 'Plan window'}</div></div>
         <div class="stat"><div class="sv" style="font-size:15px;">${fmtDate(race.date)}</div><div class="sl">Race day</div></div>
       </div>
       <div class="notes" style="margin-top:8px;">A 12 week race plan would start ${fmtDate(planStart)}.</div></div>
@@ -1505,7 +1506,7 @@ async function renderGoals(){
 async function renderRecap(){
   const main = mainEl();
   if (curSub() !== 'recap') return;
-  main.innerHTML = '<div id="recapBody"><div class="notes">Loading...</div></div>';
+  main.innerHTML = '<div id="recapBody" class="gstack"><div class="notes">Loading...</div></div>';
   if (offline || !db){ document.getElementById('recapBody').innerHTML = '<div class="notes">Not connected.</div>'; return; }
   let d; try{ d = await loadTrail(); }catch(e){ document.getElementById('recapBody').innerHTML = '<div class="notes">Could not load your logs.</div>'; return; }
   if (curSub() !== 'recap') return;
@@ -1533,7 +1534,7 @@ async function renderRecap(){
     <div class="statrow">
       <div class="stat"><div class="sv tabular">${hit}<span class="notes" style="font-size:13px;"> of ${planned.length}</span></div><div class="sl">Training days</div></div>
       <div class="stat"><div class="sv tabular">${s.prs}</div><div class="sl">PRs</div></div>
-      <div class="stat"><div class="sv tabular">${s.streak}</div><div class="sl">Week streak</div></div>
+      <div class="stat"><div class="sv tabular">${s.streak}</div><div class="sl">Streak</div></div>
     </div>
     <div class="jlabel" style="margin-top:10px;">How your lifts moved</div>
     <div class="card">${moved}<div class="notes">Best estimated max in the first two weeks, then the whole block.</div></div>
