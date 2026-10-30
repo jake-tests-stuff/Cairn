@@ -395,6 +395,16 @@ main{ gap:14px; padding-block:16px 96px; }
 .volrow{ display:grid; grid-template-columns:84px 1fr 62px; gap:8px; align-items:center; font-size:13px; margin-top:7px; }
 .voltrack{ height:8px; border-radius:4px; background:var(--surface2); overflow:hidden; } .voltrack i{ display:block; height:100%; border-radius:4px; }
 .volrow .vn{ color:var(--muted); text-align:right; } 
+/* progress dropdown groups */
+.plannav.grp{ overflow:visible; flex-wrap:nowrap; margin-inline:0; padding:2px 0 6px; gap:6px; position:relative; }
+.plannav.grp .ddwrap{ position:relative; flex:1 1 0; min-width:0; }
+.plannav.grp .ddbtn{ width:100%; font-size:13px; padding:9px 6px; border-radius:22px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.plannav.grp .ddbtn .car{ font-size:9px; margin-left:4px; opacity:.7; }
+.ddmenu{ position:absolute; top:calc(100% + 2px); left:0; min-width:150px; z-index:25; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:6px; box-shadow:0 10px 28px rgba(0,0,0,.4); display:flex; flex-direction:column; }
+.ddwrap:last-child .ddmenu, .ddwrap:nth-last-child(2) .ddmenu{ left:auto; right:0; }
+.ddmenu[hidden]{ display:none; }
+.ddmenu button{ background:transparent; border:0; color:var(--fg); font:inherit; font-size:14px; text-align:left; padding:10px 12px; border-radius:10px; }
+.ddmenu button.on{ background:var(--surface2); color:var(--accent); font-weight:700; }
 /* mini muscle figure on lift cards */
 .mrow{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
 .mrow .mchips{ flex:1; }
@@ -1336,8 +1346,18 @@ async function commitCardio(row, itemKey){
 
 
 /* ===== trail markers: badges earned from your own logged data ===== */
-let trailCache = null;
-const TRUCK_LB = 5000, ELEPHANT_LB = 13000;
+let trailCache = null, lastCmp = -1;
+/* rough weights in pounds, used only for the "how much is that" line */
+const COMPARES = [['a refrigerator','refrigerators',250],['a motorcycle','motorcycles',600],['a grizzly bear','grizzly bears',600],['a grand piano','grand pianos',1000],['a polar bear','polar bears',1000],['a horse','horses',1100],['a Smart car','Smart cars',2000],['a hippo','hippos',3500],['a pickup truck','pickup trucks',5000],['an adult elephant','adult elephants',13000],['a school bus','school buses',25000],['a humpback whale','humpback whales',60000],['a Boeing 737','Boeing 737s',90000],['an Abrams tank','Abrams tanks',140000],['a blue whale','blue whales',300000],['the Statue of Liberty','Statues of Liberty',450000]];
+function compareLb(lb){
+  const ok = COMPARES.map((c, i) => [c, i]).filter(([c]) => lb / c[2] >= 1.2 && lb / c[2] <= 3000);
+  if (!ok.length) return 'Keep stacking. Your first refrigerator is 250 lb away.';
+  let pick = ok[Math.floor(Math.random() * ok.length)];
+  if (ok.length > 1 && pick[1] === lastCmp) pick = ok[(ok.indexOf(pick) + 1) % ok.length];
+  lastCmp = pick[1];
+  const [one, many, w] = pick[0], n = lb / w;
+  return n >= 10 ? `That is about ${Math.round(n).toLocaleString()} ${many}.` : `That is about ${n.toFixed(1)} ${many}.`;
+}
 function mondayOf(ds){ const d = new Date(ds + 'T12:00:00'); return addDaysStr(ds, -((d.getDay() + 6) % 7)); }
 function trailStats(docs){
   const s = { ton:0, sets:0, reps:0, dayTon:{}, weekTon:{}, weekDays:{}, days:new Set(), prs:0, pullups:0, burpees:0, zone2:0, trailMin:0, e1:{ squat:0, bench:0, deadlift:0 } };
@@ -1440,11 +1460,10 @@ async function renderTrail(){
   try{
     const d = await loadTrail(); trailStore(d.fams);
     const earned = d.fams.reduce((n, f) => n + f.tier, 0), total = d.fams.reduce((n, f) => n + f.tiers.length, 0);
-    const lb = d.stats.ton, trucks = lb / TRUCK_LB;
-    const fun = lb < 5000 ? 'Keep stacking. Your first pickup truck is 5,000 lb away.' : lb < 65000 ? `That is about ${Math.round(trucks)} pickup truck${Math.round(trucks) === 1 ? '' : 's'} lifted.` : `That is about ${Math.round(lb / ELEPHANT_LB)} adult elephants.`;
+    const lb = d.stats.ton;
     const cats = ['Volume','Strength','Consistency','Records','Endurance','Spartan'];
     document.getElementById('trailBody').innerHTML = `
-      <div class="card"><div class="trailsum"><div><div class="recbig tabular">${earned} <span class="notes" style="font-size:13px;font-weight:500;">of ${total} levels</span></div><div class="notes" style="margin-top:6px;">${Math.round(lb).toLocaleString()} lb lifted all time. ${fun}</div></div></div></div>
+      <div class="card" id="trailSum" style="cursor:pointer;"><div class="trailsum"><div><div class="recbig tabular">${earned} <span class="notes" style="font-size:13px;font-weight:500;">of ${total} levels</span></div><div class="notes" style="margin-top:6px;">${Math.round(lb).toLocaleString()} lb lifted all time.</div><div class="notes" id="trailFun" style="margin-top:4px;">${compareLb(lb)}</div><div class="notes" style="margin-top:6px;font-size:11px;opacity:.7;">Tap for a different comparison</div></div></div></div>
       ${cats.map(c => `<div class="jlabel" style="margin-top:6px;">${c}</div>` + d.fams.filter(f => f.cat === c).map(f => {
         const lo = f.tier ? f.tiers[f.tier - 1] : 0, hi = f.tiers[f.tier] != null ? f.tiers[f.tier] : null;
         const frac = hi == null ? 100 : Math.max(0, Math.min(100, (f.value - lo) / (hi - lo) * 100));
@@ -1455,6 +1474,7 @@ async function renderTrail(){
           <div class="bprog"><i style="width:${frac}%"></i></div>
           <div class="pips">${f.tiers.map((x, i) => `<i class="${i < f.tier ? 'on' : ''}"></i>`).join('')}</div></div></div>`;
       }).join('')).join('')}`;
+    document.getElementById('trailSum').onclick = () => { document.getElementById('trailFun').textContent = compareLb(lb); };
   }catch(e){ console.warn(e); const b = document.getElementById('trailBody'); if (b) b.innerHTML = '<div class="notes">Could not load trail markers.</div>'; }
 }
 
@@ -1956,6 +1976,12 @@ const SUBS = {
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
   plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['exercises','Exercises'],['settings','Settings']]
 };
+const PROGRESS_GROUPS = [
+  ['Overview', [['week','Week'],['trail','Trail']]],
+  ['Lifting', [['history','Lifts'],['records','Records'],['strength','Strength'],['volume','Volume'],['sticking','Bench']]],
+  ['Body', [['weight','Weight'],['balance','Balance'],['functional','Functional']]],
+  ['Checks', [['bench','Tests'],['skips','Skips']]],
+];
 const VIEW_TITLES = { progress:'Progress', body:'Body', plan:'Plan' };
 let subs = { progress:'week', body:'readiness', plan:'maxes' };
 function curSub(){ return view==='today' ? 'today' : subs[view]; }
@@ -2000,9 +2026,21 @@ function renderSubView(){
   const main = document.getElementById('main');
   main.hidden = false;
   const list = SUBS[view];
-  main.innerHTML = `<div class="plannav">${list.map(([k,l]) => `<button class="mpick ${subs[view]===k?'on':''}" data-sub="${k}">${l}</button>`).join('')}</div><div id="subbody" class="subbody"></div>`;
-  main.querySelectorAll('.plannav .mpick').forEach(b => b.onclick = () => { subs[view] = b.dataset.sub; renderSubView(); });
-  { const on = main.querySelector('.plannav .mpick.on'); if (on) on.scrollIntoView({ inline:'center', block:'nearest' }); }
+  if (view === 'progress'){
+    main.innerHTML = `<div class="plannav grp">${PROGRESS_GROUPS.map(([name, items], gi) => {
+      const cur = items.find(([k]) => k === subs.progress);
+      return `<div class="ddwrap"><button class="mpick ddbtn ${cur ? 'on' : ''}" data-grp="${gi}" aria-haspopup="true" aria-expanded="false">${cur ? cur[1] : name}<span class="car">&#9662;</span></button>
+        <div class="ddmenu" hidden>${items.map(([k,l]) => `<button type="button" class="${subs.progress===k?'on':''}" data-sub="${k}">${l}</button>`).join('')}</div></div>`;
+    }).join('')}</div><div id="subbody" class="subbody"></div>`;
+    const closeAll = () => main.querySelectorAll('.ddmenu').forEach(m => { m.hidden = true; m.previousElementSibling.setAttribute('aria-expanded', 'false'); });
+    main.querySelectorAll('.ddbtn').forEach(b => b.onclick = (e) => { e.stopPropagation(); const m = b.nextElementSibling, open = m.hidden; closeAll(); if (open){ m.hidden = false; b.setAttribute('aria-expanded', 'true'); } });
+    main.querySelectorAll('.ddmenu button').forEach(b => b.onclick = () => { subs.progress = b.dataset.sub; renderSubView(); });
+    if (!window._ddClose){ window._ddClose = true; document.addEventListener('click', () => document.querySelectorAll('.ddmenu').forEach(m => m.hidden = true)); }
+  } else {
+    main.innerHTML = `<div class="plannav">${list.map(([k,l]) => `<button class="mpick ${subs[view]===k?'on':''}" data-sub="${k}">${l}</button>`).join('')}</div><div id="subbody" class="subbody"></div>`;
+    main.querySelectorAll('.plannav .mpick').forEach(b => b.onclick = () => { subs[view] = b.dataset.sub; renderSubView(); });
+    { const on = main.querySelector('.plannav .mpick.on'); if (on) on.scrollIntoView({ inline:'center', block:'nearest' }); }
+  }
   const s = subs[view];
   if (s==='week') renderWeek();
   else if (s==='history') renderHistory();
