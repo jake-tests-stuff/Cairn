@@ -384,6 +384,17 @@ main{ gap:14px; padding-block:16px 96px; }
 .calcrow input{ flex:1; min-width:0; background:var(--surface2); border:1px solid var(--line); color:var(--fg); border-radius:10px; padding:9px 10px; font:inherit; }
 .calctab{ width:100%; border-collapse:collapse; font-size:13px; margin-top:6px; }
 .calctab td{ padding:4px 0; border-bottom:1px solid var(--line); } .calctab td:last-child{ text-align:right; }
+/* supersets */
+.sstag{ display:inline-block; margin-left:8px; font-size:10.5px; font-weight:800; letter-spacing:.08em; color:var(--accent); border:1px solid var(--accent); border-radius:999px; padding:1px 7px; vertical-align:middle; }
+.card.ss{ border-left:3px solid var(--accent); }
+/* balance view */
+.lvbar{ display:flex; gap:4px; margin-top:8px; }
+.lvbar span{ flex:1; height:8px; border-radius:4px; background:var(--surface2); overflow:hidden; }
+.lvbar span i{ display:block; height:100%; background:var(--accent); }
+.lvnames{ display:flex; justify-content:space-between; font-size:10px; color:var(--faint); letter-spacing:.04em; margin-top:3px; }
+.volrow{ display:grid; grid-template-columns:84px 1fr 62px; gap:8px; align-items:center; font-size:13px; margin-top:7px; }
+.voltrack{ height:8px; border-radius:4px; background:var(--surface2); overflow:hidden; } .voltrack i{ display:block; height:100%; border-radius:4px; }
+.volrow .vn{ color:var(--muted); text-align:right; } 
 /* header */
 .topbar{ border-bottom:none; box-shadow:0 1px 0 var(--line); }
 .daytitle .wk{ font-size:12px; letter-spacing:.06em; text-transform:none; font-weight:600; opacity:.95; }
@@ -593,7 +604,7 @@ let unsubMaxes = null, unsubLogs = null, unsubDayEdit = null;
 let histExercise = EXNAMES[0];
 let histRows = [];
 let editMode = false;
-let dayEdit = { hidden: [], custom: [], setAdj: {} }; // per-day overrides for the currently viewed date
+let dayEdit = { hidden: [], custom: [], setAdj: {}, links: [] }; // per-day overrides for the currently viewed date
 let priorPerf = {}; // exercise name -> most recent prior session's sets array
 let showAddForm = false;
 
@@ -656,6 +667,22 @@ function dayItems(){
     };
   });
   return { program, custom, all: program.concat(custom) };
+}
+
+/* supersets: a linked exercise alternates with the next visible lift. Only the day you are viewing is considered. */
+function ssInfo(key){
+  const vis = dayItems().all.filter(i => !i.hidden && i.sets != null && !isWarm(i.ex));
+  const links = new Set(dayEdit.links || []);
+  const info = {}; let g = -1, n = 0;
+  vis.forEach((it, i) => {
+    const prevLinked = i > 0 && links.has(vis[i-1].k);
+    if (!prevLinked){ g++; n = 0; }
+    n++;
+    const linked = links.has(it.k) && i + 1 < vis.length;
+    const inGroup = prevLinked || linked;
+    info[it.k] = { inGroup, tag: String.fromCharCode(65 + g) + n, last: !linked, next: linked ? recName(vis[i+1].ex) : null, canLink: i + 1 < vis.length, linked };
+  });
+  return info[key] || null;
 }
 
 /* ===== init ===== */
@@ -736,11 +763,11 @@ async function loadPriorPerf(){
 function watchDayEdit(){
   if (unsubDayEdit) { unsubDayEdit(); unsubDayEdit = null; }
   watchSession();
-  dayEdit = { hidden: [], custom: [], setAdj: {} };
+  dayEdit = { hidden: [], custom: [], setAdj: {}, links: [] };
   if (!db) return;
   const date = WORKOUTS[curIdx].date;
   unsubDayEdit = db.doc('dayEdits/'+date).onSnapshot(snap => {
-    dayEdit = snap.exists ? { hidden: snap.data().hidden||[], custom: snap.data().custom||[], setAdj: snap.data().setAdj||{} } : { hidden: [], custom: [], setAdj: {} };
+    dayEdit = snap.exists ? { hidden: snap.data().hidden||[], custom: snap.data().custom||[], setAdj: snap.data().setAdj||{}, links: snap.data().links||[] } : { hidden: [], custom: [], setAdj: {}, links: [] };
     renderDay();
   }, err => { console.warn('dayEdit sub error', err); });
 }
@@ -748,7 +775,7 @@ function watchDayEdit(){
 async function saveDayEdit(){
   if (offline) return;
   const date = WORKOUTS[curIdx].date;
-  try{ await db.doc('dayEdits/'+date).set({ hidden: dayEdit.hidden, custom: dayEdit.custom, setAdj: dayEdit.setAdj||{}, updatedAt: new Date().toISOString() }); }
+  try{ await db.doc('dayEdits/'+date).set({ hidden: dayEdit.hidden, custom: dayEdit.custom, setAdj: dayEdit.setAdj||{}, links: dayEdit.links||[], updatedAt: new Date().toISOString() }); }
   catch(e){ console.warn('save dayEdit failed', e); }
 }
 
@@ -1018,12 +1045,13 @@ function renderDay(){
         ${item.custom ? '<span class="customtag">CUSTOM</span>' : ''}
         <button class="ghostbtn" data-hide="${item.k}" ${item.custom ? 'hidden' : ''}>${item.hidden ? 'Unhide' : 'Hide today'}</button>
         ${item.custom ? `<button class="ghostbtn danger" data-remove="${item.customId}">Remove</button>` : ''}
+        ${(() => { const s = ssInfo(item.k); return s && s.canLink ? `<button class="ghostbtn" data-link="${item.k}">${s.linked ? 'Unlink superset' : 'Superset with next'}</button>` : ''; })()}
       </div>` : '';
 
     html += `
-      <div class="card ${isPrimary?'primary':''} ${item.hidden?'cardhidden':''}">
+      <div class="card ${isPrimary?'primary':''} ${item.hidden?'cardhidden':''} ${(() => { const s = ssInfo(item.k); return s && s.inGroup ? 'ss' : ''; })()}">
         <div class="exhead">
-          <div class="exname">${esc(item.ex)}${logDoc[item.k] && logDoc[item.k].pr ? '<span class="prtag" title="Personal record">PR</span>' : ''}</div>
+          <div class="exname">${esc(item.ex)}${logDoc[item.k] && logDoc[item.k].pr ? '<span class="prtag" title="Personal record">PR</span>' : ''}${(() => { const s = ssInfo(item.k); return s && s.inGroup ? '<span class="sstag" title="Superset">SS ' + s.tag + '</span>' : ''; })()}</div>
           <div class="chips">${chips.join('')}</div>
         </div>
         ${muscleChips ? `<div class="mchips">${muscleChips}</div>` : ''}
@@ -1111,6 +1139,15 @@ function wireAddForm(){
 }
 
 function wireEditControls(){
+  document.querySelectorAll('[data-link]').forEach(btn => {
+    btn.onclick = async () => {
+      const k = btn.dataset.link, set = new Set(dayEdit.links || []);
+      set.has(k) ? set.delete(k) : set.add(k);
+      dayEdit.links = Array.from(set);
+      await saveDayEdit();
+      renderDay();
+    };
+  });
   document.querySelectorAll('[data-hide]').forEach(btn => {
     btn.onclick = async () => {
       const k = btn.dataset.hide;
@@ -1275,6 +1312,69 @@ async function commitCardio(row, itemKey){
   catch(e){ console.warn('save failed', e); }
 }
 
+
+
+/* ===== balance: strength vs bodyweight, lift ratios, weekly volume per muscle ===== */
+/* Approximate bodyweight multiples for a male lifter: beginner, novice, intermediate, advanced, elite. A guide, not a verdict. */
+const STANDARDS = { squat:[0.50,0.85,1.20,1.70,2.20], bench:[0.38,0.63,0.90,1.25,1.65], deadlift:[0.63,1.00,1.40,1.90,2.45] };
+const LV_NAMES = ['Beginner','Novice','Intermediate','Advanced','Elite'];
+const BIG3 = { squat:/^squat(?: — attempt)?$|^back squat$/i, bench:/^bench(?: press)?(?: — attempt)?$/i, deadlift:/^(?:conventional )?deadlift(?: — attempt)?$/i };
+const VOL_GROUPS = ['Chest','Back','Shoulders','Biceps','Triceps','Quads','Hamstrings','Glutes','Calves','Core'];
+function levelOf(lift, ratio){
+  const th = STANDARDS[lift]; let lv = -1; th.forEach((x,i) => { if (ratio >= x) lv = i; });
+  return lv;
+}
+async function renderBalance(){
+  const main = mainEl();
+  if (curSub() !== 'balance') return;
+  main.innerHTML = `<div class="notes">Where you stand against bodyweight, how your lifts compare to each other, and which muscles get the most and least work. These are rough guides to spot lopsidedness, not a verdict on what you can do.</div><div id="balBody"><div class="notes">Loading...</div></div>`;
+  if (offline || !db){ document.getElementById('balBody').innerHTML = '<div class="notes">Not connected.</div>'; return; }
+  try{
+    let bw = Number(maxes.bodyweight) || 0;
+    try{ const s = await db.collection('bodyweight').orderBy('date','desc').limit(1).get(); if (s.docs.length && s.docs[0].data().lb) bw = Number(s.docs[0].data().lb); }catch(e){}
+    const snap = await db.collection('logs').where('date','>=',dateStrAgo(120)).orderBy('date','asc').limit(2500).get();
+    const logged = { squat:0, bench:0, deadlift:0 }, vol = {}, start28 = dateStrAgo(28);
+    snap.docs.forEach(d => {
+      const x = d.data() || {}; if (!x.sets || !x.exercise || isWarm(x.exercise)) return;
+      const name = recName(x.exercise);
+      const done = x.sets.filter(s => s && s.done);
+      if (!done.length) return;
+      Object.keys(BIG3).forEach(k => { if (BIG3[k].test(name)) done.forEach(s => { const wt = Number(s.w), r = Number(s.r); if (wt > 0 && r >= 1 && r <= 12) logged[k] = Math.max(logged[k], e1rm(wt, r)); }); });
+      if (x.date >= start28){
+        const e = libLookup(name); let prim = [], sec = [];
+        if (e){ prim = e.p; sec = e.s; } else { const m = inferMuscles(name) || []; prim = m.slice(0,1); sec = m.slice(1); }
+        prim.forEach(m => { vol[m] = (vol[m] || 0) + done.length; });
+        sec.forEach(m => { vol[m] = (vol[m] || 0) + done.length * 0.5; });
+      }
+    });
+    const est = {};
+    Object.keys(BIG3).forEach(k => { const saved = Number(maxes[k]) || 0; est[k] = Math.max(saved, Math.round(logged[k])); });
+    const lifts = Object.keys(BIG3).map(k => {
+      const ratio = bw ? est[k] / bw : 0, lv = levelOf(k, ratio), th = STANDARDS[k];
+      const segs = th.map((x,i) => { const lo = i ? th[i-1] : 0; const f = ratio >= x ? 100 : ratio > lo ? Math.round((ratio-lo)/(x-lo)*100) : 0; return `<span><i style="width:${f}%"></i></span>`; }).join('');
+      const next = lv < 4 ? `Next: ${LV_NAMES[lv+1]} at ${Math.round(th[lv+1]*bw)} lb` : 'Top of the scale';
+      const src = logged[k] > (Number(maxes[k])||0) ? 'logged sets' : 'saved max';
+      return `<div style="margin-top:12px;"><div class="exhead"><div class="exname">${k[0].toUpperCase()+k.slice(1)}</div><div class="chips"><span class="chip">${lv >= 0 ? LV_NAMES[lv] : 'Below beginner'}</span></div></div>
+        <div class="notes"><b class="tabular" style="color:var(--fg)">${est[k]} lb</b> est. max (${src}) · ${ratio.toFixed(2)}× bodyweight · ${next}</div>
+        <div class="lvbar">${segs}</div><div class="lvnames"><span>Beg</span><span>Nov</span><span>Int</span><span>Adv</span><span>Elite</span></div></div>`;
+    }).join('');
+    const sq = est.squat, bn = est.bench, dl = est.deadlift;
+    const notes = [];
+    if (sq && bn){ const r = bn / sq; notes.push(r > 0.80 ? `Bench is ${Math.round(r*100)}% of your squat. Your upper body is ahead of your legs, so squat work may be the thing to push.` : r < 0.55 ? `Bench is ${Math.round(r*100)}% of your squat. Your legs are ahead of your press, so pressing may be the thing to push.` : `Bench is ${Math.round(r*100)}% of your squat. That is a balanced range.`); }
+    if (sq && dl){ const r = dl / sq; notes.push(r < 0.9 ? `Deadlift is ${Math.round(r*100)}% of your squat. Hips, hamstrings and back may be lagging your quads.` : r > 1.35 ? `Deadlift is ${Math.round(r*100)}% of your squat. Your squat may be the lift with room to grow.` : `Deadlift is ${Math.round(r*100)}% of your squat. That is a balanced range.`); }
+    const wk = {}; VOL_GROUPS.forEach(g => { wk[g] = (vol[g] || 0) / 4; });
+    const push = wk.Chest + wk.Shoulders + wk.Triceps, pull = wk.Back + wk.Biceps;
+    if (push + pull > 0){ const pp = push / Math.max(pull, 0.1); notes.push(pp > 1.3 ? `Pushing outweighs pulling about ${pp.toFixed(1)} to 1 in your last 4 weeks. More rows and pull-ups would even it out, and is kind to the shoulders.` : pp < 0.6 ? `Pulling outweighs pushing in your last 4 weeks (${pp.toFixed(1)} to 1).` : `Push and pull work are about even (${pp.toFixed(1)} to 1).`); }
+    const zone = (n) => n < 6 ? ['Low','var(--bad)'] : n < 10 ? ['Light','var(--yellow)'] : n <= 20 ? ['Solid','var(--good)'] : ['High','var(--accent)'];
+    const rows = VOL_GROUPS.map(g => { const n = wk[g], z = zone(n); return `<div class="volrow"><div>${g}</div><div class="voltrack"><i style="width:${Math.min(100, n/24*100)}%;background:${z[1]}"></i></div><div class="vn tabular">${n.toFixed(1)} <span style="font-size:11px">${z[0]}</span></div></div>`; }).join('');
+    const low = VOL_GROUPS.filter(g => wk[g] < 6).sort((a,b) => wk[a]-wk[b]);
+    document.getElementById('balBody').innerHTML = `
+      <div class="card"><div class="exname">Strength vs bodyweight</div><div class="notes">At ${bw ? bw + ' lb' : 'an unknown bodyweight (set it in Maxes)'}. Levels are approximate and based on typical standards for male lifters.</div>${lifts}</div>
+      <div class="card"><div class="exname">How your lifts compare</div>${notes.length ? notes.map(n => `<div class="notes" style="margin-top:6px;">${n}</div>`).join('') : '<div class="notes">Log a few sessions to see this.</div>'}</div>
+      <div class="card"><div class="exname">Weekly sets per muscle (last 4 weeks)</div>
+        <div class="notes">${low.length ? 'Least trained: ' + low.slice(0,3).map(g => g + ' (' + wk[g].toFixed(1) + ')').join(', ') + '. ' : ''}Counts hard sets per week, with secondary muscles at half. Around 10 to 20 is a solid range for growth, and about 6 keeps what you have.</div>${rows}</div>`;
+  }catch(e){ console.warn(e); const b = document.getElementById('balBody'); if (b) b.innerHTML = '<div class="notes">Could not load this view.</div>'; }
+}
 
 /* ===== records: all-time bests per exercise ===== */
 let recCache = null;
@@ -1708,7 +1808,7 @@ function renderMaxes(){
 
 /* =================== CAIRN ADDITIONS =================== */
 const SUBS = {
-  progress: [['week','Week'],['history','Lifts'],['records','Records'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
+  progress: [['week','Week'],['history','Lifts'],['records','Records'],['balance','Balance'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
   plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['exercises','Exercises'],['settings','Settings']]
 };
@@ -1763,6 +1863,7 @@ function renderSubView(){
   if (s==='week') renderWeek();
   else if (s==='history') renderHistory();
   else if (s==='records') renderRecords();
+  else if (s==='balance') renderBalance();
   else if (s==='volume') renderVolume();
   else if (s==='weight') renderWeight();
   else if (s==='functional') renderFunctional();
@@ -2285,6 +2386,23 @@ function wireToday(){
   const su = document.getElementById('skipUndo'); if (su) su.onclick = undoSkip;
 }
 
+
+/* While pinch-zoomed, fixed bars would stay at the layout edge and slide off screen. Pin them to the visible area at normal size. */
+function pinBars(){
+  const vv = window.visualViewport; if (!vv) return;
+  const els = document.querySelectorAll('.tabbar, .restbar');
+  const s = vv.scale;
+  if (s <= 1.02){ els.forEach(e => { e.style.transform = ''; e.style.transformOrigin = ''; }); return; }
+  const H = document.documentElement.clientHeight;
+  els.forEach(e => {
+    const cs = getComputedStyle(e), bottom = parseFloat(cs.bottom) || 0, left = parseFloat(cs.left) || 0;
+    const ty = vv.offsetTop + vv.height - bottom / s - (H - bottom), tx = vv.offsetLeft + left / s - left;
+    e.style.transformOrigin = '0 100%';
+    e.style.transform = `translate(${tx}px, ${ty}px) scale(${1 / s})`;
+  });
+}
+if (window.visualViewport){ visualViewport.addEventListener('resize', pinBars); visualViewport.addEventListener('scroll', pinBars); }
+
 /* ================= PUSH (locked-screen alerts via the Cloudflare worker) ================= */
 const PUSH_URL = 'https://cairn.jakebentley0330.workers.dev';   /* set to your worker address, e.g. https://cairn-push.NAME.workers.dev */
 const VAPID_PUB = 'BCNEidd2FCukumAkMttmdGOTbm_VTimoUbJecCr1iuLGpz2G5_0cWw9_CQAU1pLKkuSQ7eJTr86EWLlBiOAW8xY';
@@ -2392,10 +2510,11 @@ function startRest(key){
   if (!settings.timer) return;
   const it = findItem(key);
   if (!it || isWarm(it.ex)) return;
-  const sec = parseRestSec(it.rest);
+  const ss = ssInfo(key), hop = !!(ss && ss.inGroup && !ss.last);
+  const sec = hop ? 15 : parseRestSec(it.rest);
   if (!sec) return;
   primeBeep();
-  restT = { end: Date.now()+sec*1000, total: sec, label: it.ex.replace(/\s*\((PRIMARY|secondary)\)/,''), fired:false };
+  restT = { end: Date.now()+sec*1000, total: sec, label: hop ? 'Superset: go to ' + ss.next : it.ex.replace(/\s*\((PRIMARY|secondary)\)/,''), fired:false };
   if (!restInt) restInt = setInterval(tickRest, 250);
   tickRest();
   pushRestSchedule();
