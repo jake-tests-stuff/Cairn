@@ -1455,20 +1455,18 @@ function badgeSvg(lit){
   return `<svg viewBox="0 0 100 100" aria-hidden="true">${ys.map((e,i) => `<ellipse class="${i < lit ? 'lit' : ''}" cx="${e[0]}" cy="${e[1]}" rx="${e[2]}" ry="${e[3]}"/>`).join('')}</svg>`;
 }
 /* ===== Goals page and Block recap ===== */
-const RACE_DEFAULT = { name:'Spartan Super', date:'2027-07-17', place:'Grand Rapids' };
 const dayDiff = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000);
 async function renderGoals(){
   const main = mainEl();
   if (curSub() !== 'goals') return;
   main.innerHTML = '<div id="goalBody" class="gstack"><div class="notes">Loading...</div></div>';
   if (offline || !db){ document.getElementById('goalBody').innerHTML = '<div class="notes">Not connected.</div>'; return; }
-  let race = Object.assign({}, RACE_DEFAULT), d;
+  let race = null, d;
   try{ const g = await db.doc('state/goals').get(); if (g.exists) goals = Object.assign({}, GOAL_DEFAULT, g.data()); }catch(e){}
-  try{ const r = await db.doc('state/race').get(); if (r.exists) race = Object.assign(race, r.data()); }catch(e){}
+  try{ const r = await db.doc('state/race').get(); if (r.exists && r.data().date) race = r.data(); }catch(e){}
   try{ d = await loadTrail(); }catch(e){ document.getElementById('goalBody').innerHTML = '<div class="notes">Could not load your logs.</div>'; return; }
   if (curSub() !== 'goals') return;
-  const today = todayStr(), toRace = dayDiff(today, race.date);
-  const planStart = addDaysStr(mondayOf(race.date), -77), toPlan = dayDiff(today, planStart);
+  const today = todayStr();
   const lifts = [['squat','Squat'],['bench','Bench'],['dl','Deadlift']];
   const goalKey = { squat:'squat', bench:'bench', dl:'deadlift' };
   const rows = lifts.map(([id, name]) => {
@@ -1480,26 +1478,36 @@ async function renderGoals(){
       <div class="notes"><b class="tabular" style="color:var(--fg)">${cur || '-'}</b> best estimate${goal ? ` of <b class="tabular" style="color:var(--fg)">${goal}</b> lb goal · ${left > 0 ? left + ' lb to go' : 'goal reached'}` : ''}</div>
       <div class="bprog"><i style="width:${frac}%"></i></div></div></div>`;
   }).join('');
-  document.getElementById('goalBody').innerHTML = `
-    <div class="card"><div class="exhead"><div class="exname">${esc(race.name)}</div><div class="chips"><span class="chip">${esc(race.place || '')}</span></div></div>
+  let raceHtml;
+  if (race){
+    const toRace = dayDiff(today, race.date), planStart = addDaysStr(mondayOf(race.date), -77), toPlan = dayDiff(today, planStart);
+    raceHtml = `<div class="card"><div class="exhead"><div class="exname">${esc(race.name)}</div><div class="chips">${race.place ? `<span class="chip">${esc(race.place)}</span>` : ''}</div></div>
       <div class="statrow">
         <div class="stat"><div class="sv tabular">${toRace > 0 ? toRace : 0}</div><div class="sl">To race day</div></div>
         <div class="stat"><div class="sv tabular">${toPlan > 0 ? toPlan : 'Now'}</div><div class="sl">${toPlan > 0 ? 'To plan' : 'Plan window'}</div></div>
         <div class="stat"><div class="sv" style="font-size:15px;">${fmtDate(race.date)}</div><div class="sl">Race day</div></div>
       </div>
-      <div class="notes" style="margin-top:8px;">A 12 week race plan would start ${fmtDate(planStart)}.</div></div>
+      <div class="notes" style="margin-top:8px;">A 12 week race plan would start ${fmtDate(planStart)}.</div></div>`;
+  } else raceHtml = `<div class="card"><div class="exname">Race or event</div><div class="notes">Optional. Add a date to get a countdown and a suggested plan start. Nothing is set until you add one.</div></div>`;
+  document.getElementById('goalBody').innerHTML = raceHtml + `
     <div class="jlabel" style="margin-top:10px;">Strength goals</div>${rows}
     <div class="notes">Bars use your best estimated max from logged sets, or your tested max if higher.</div>
     <details class="card" style="margin-top:10px;"><summary style="cursor:pointer;">Edit goals</summary>
       <div style="margin-top:8px;">${lifts.map(([id, name]) => `<label class="jlabel">${name} goal (lb)<input type="number" inputmode="numeric" id="gg_${id}" value="${goals[goalKey[id]] ?? ''}"></label>`).join('')}</div>
       <div class="jlabel" style="margin-top:8px;">Race</div>
-      <input type="text" id="gr_name" value="${esc(race.name)}" placeholder="Race name"><input type="text" id="gr_place" value="${esc(race.place || '')}" placeholder="Place" style="margin-top:6px;"><input type="date" id="gr_date" value="${race.date}" style="margin-top:6px;">
-      <button class="btn" id="ggSave" style="margin-top:8px;">Save goals</button></details>`;
+      <input type="text" id="gr_name" value="${esc(race ? race.name : '')}" placeholder="Race name"><input type="text" id="gr_place" value="${esc(race ? race.place || '' : '')}" placeholder="Place (optional)" style="margin-top:6px;"><input type="date" id="gr_date" value="${race ? race.date : ''}" style="margin-top:6px;">
+      <button class="btn" id="ggSave" style="margin-top:8px;">Save goals</button>${race ? '<button class="ghostbtn" id="grClear" style="margin-top:8px;">Remove race</button>' : ''}</details>`;
+  const gc = document.getElementById('grClear');
+  if (gc) gc.onclick = async () => { try{ await db.doc('state/race').delete(); }catch(e){ console.warn(e); } renderGoals(); };
   document.getElementById('ggSave').onclick = async () => {
     const g = {}; lifts.forEach(([id]) => { const v = document.getElementById('gg_' + id).value; g[goalKey[id]] = v === '' ? null : Number(v); });
     goals = Object.assign({}, goals, g);
-    const r = { name: document.getElementById('gr_name').value.trim() || RACE_DEFAULT.name, place: document.getElementById('gr_place').value.trim(), date: document.getElementById('gr_date').value || RACE_DEFAULT.date };
-    try{ await db.doc('state/goals').set(Object.assign({}, goals, { updatedAt: new Date().toISOString() })); await db.doc('state/race').set(Object.assign({}, r, { updatedAt: new Date().toISOString() })); }catch(e){ console.warn(e); }
+    const rd = document.getElementById('gr_date').value;
+    const r = { name: document.getElementById('gr_name').value.trim() || 'Race', place: document.getElementById('gr_place').value.trim(), date: rd };
+    try{
+      await db.doc('state/goals').set(Object.assign({}, goals, { updatedAt: new Date().toISOString() }));
+      if (rd) await db.doc('state/race').set(Object.assign({}, r, { updatedAt: new Date().toISOString() }));
+    }catch(e){ console.warn(e); }
     renderGoals();
   };
 }
@@ -1562,13 +1570,13 @@ async function renderRecap(){
   else if (cnt('up') >= 2) plan = { name:'Powerlifting Peak or Powerbuilding', why:'Most lifts are still rising, so keep pushing strength. Peak if you want a hard test of the big three, or Powerbuilding to keep size and strength moving together.' };
   else if (cnt('flat') + cnt('down') >= 2) plan = { name:'Hypertrophy Block', why:'Most lifts have stalled. A volume-focused block builds muscle to push the next strength block past this plateau.' };
   else plan = { name:'Powerbuilding', why:'Mixed results. A blend of strength and volume work covers both.' };
-  const toRace = dayDiff(today, '2027-07-17');
+  let race = null; try{ const r = await db.doc('state/race').get(); if (r.exists && r.data().date) race = r.data(); }catch(e){}
   const nextHtml = `
     <div class="jlabel" style="margin-top:14px;">Next block ${done ? '' : '<span class="notes" style="text-transform:none;">(preview, firms up as the block ends)</span>'}</div>
     <div class="card">${verdicts.map(x => `<div class="mbar"><div>${x.n}</div><div class="notes" style="margin:0;">${x.a ? x.a + ' → ' + x.r + ' (' + (x.pct >= 0 ? '+' : '') + x.pct.toFixed(1) + '%)' : '-'}</div><div class="tabular" style="text-align:right;">${icon[x.v]}</div></div><div class="notes" style="margin:-2px 0 6px;">${tips[x.v]}</div>`).join('')}
       <div class="notes">Compares your best estimated max in the first two weeks with the last three weeks.</div></div>
     <div class="card"><div class="exhead"><div class="exname">${plan.name}</div></div><div class="notes">${plan.why}</div>
-      <div class="notes" style="margin-top:6px;">Then: test week to confirm real maxes, and set new goals. The Spartan Super is ${toRace} days out, so there is room for about two more strength blocks before its plan starts on Apr 26.</div>
+      <div class="notes" style="margin-top:6px;">Then: test week to confirm real maxes, and set new goals.${race && dayDiff(today, race.date) > 0 ? ` ${esc(race.name)} is ${dayDiff(today, race.date)} days out; its 12 week plan would start ${fmtDate(addDaysStr(mondayOf(race.date), -77))}.` : ''}</div>
       <button class="ghostbtn" id="rcPlans" style="margin-top:8px;">Browse plans</button></div>`;
   document.getElementById('recapBody').insertAdjacentHTML('beforeend', nextHtml);
   document.getElementById('rcPlans').onclick = () => { subs.plan = 'plans'; setView('plan'); };
