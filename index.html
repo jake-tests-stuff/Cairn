@@ -2392,7 +2392,7 @@ function pinBars(){
   const vv = window.visualViewport; if (!vv) return;
   const els = document.querySelectorAll('.tabbar, .restbar');
   const s = vv.scale;
-  if (s <= 1.02){ els.forEach(e => { e.style.transform = ''; e.style.transformOrigin = ''; }); return; }
+  if (s <= 1.003){ els.forEach(e => { e.style.transform = ''; e.style.transformOrigin = ''; }); return; }
   const H = document.documentElement.clientHeight;
   els.forEach(e => {
     const cs = getComputedStyle(e), bottom = parseFloat(cs.bottom) || 0, left = parseFloat(cs.left) || 0;
@@ -2401,7 +2401,10 @@ function pinBars(){
     e.style.transform = `translate(${tx}px, ${ty}px) scale(${1 / s})`;
   });
 }
-if (window.visualViewport){ visualViewport.addEventListener('resize', pinBars); visualViewport.addEventListener('scroll', pinBars); }
+let pinRaf = 0;
+const pinSoon = () => { if (!pinRaf) pinRaf = requestAnimationFrame(() => { pinRaf = 0; pinBars(); }); };
+if (window.visualViewport){ visualViewport.addEventListener('resize', pinSoon); visualViewport.addEventListener('scroll', pinSoon); }
+window.addEventListener('touchend', () => setTimeout(pinBars, 60), { passive:true });
 
 /* ================= PUSH (locked-screen alerts via the Cloudflare worker) ================= */
 const PUSH_URL = 'https://cairn.jakebentley0330.workers.dev';   /* set to your worker address, e.g. https://cairn-push.NAME.workers.dev */
