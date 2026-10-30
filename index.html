@@ -1545,6 +1545,33 @@ async function renderRecap(){
       ${topDow != null ? `<div class="notes">Most consistent day: <b style="color:var(--fg)">${names[topDow]}</b> (${byDow[topDow]} sessions).</div>` : ''}
       <div class="notes"><b class="tabular" style="color:var(--fg)">${s.sets.toLocaleString()}</b> sets and <b class="tabular" style="color:var(--fg)">${s.reps.toLocaleString()}</b> reps logged.</div>
     </div>`;
+  /* ---- next block: read each lift's trend, then suggest where to go ---- */
+  const recent = trailStats(docs.filter(x => x.date >= addDaysStr(upTo, -20)));
+  const verdicts = [['squat','Squat'],['bench','Bench'],['deadlift','Deadlift']].map(([k, n]) => {
+    const a = early.e1[k], r = recent.e1[k];
+    if (!a || !r) return { k, n, v:'unknown' };
+    const pct = (r - a) / a * 100;
+    return { k, n, pct, v: pct >= 2.5 ? 'up' : pct <= -2.5 ? 'down' : 'flat', a: Math.round(a), r: Math.round(r) };
+  });
+  const cnt = (v) => verdicts.filter(x => x.v === v).length, known = verdicts.filter(x => x.v !== 'unknown').length;
+  const tips = { up:'Still climbing. Keep the progression, re-test, and raise the goal.', flat:'Stalled. Change the stimulus: more volume or a variation, and check sleep and food.', down:'Slipping. Recovery first: fewer hard sets and lower intensity, then build back.', unknown:'Not enough logged sets in both stretches to judge.' };
+  const icon = { up:'&#9650;', flat:'&#9644;', down:'&#9660;', unknown:'?' };
+  let plan;
+  if (!known) plan = { name:'Keep logging', why:'There are too few logged sets to read a trend yet. A few more weeks of full logging will make this useful.' };
+  else if (cnt('down') >= 2) plan = { name:'Maintenance and Recovery', why:'Two or more lifts are down. A lighter 4 week block lets you recover, then run a strength block again from a fresher place.' };
+  else if (cnt('up') >= 2) plan = { name:'Powerlifting Peak or Powerbuilding', why:'Most lifts are still rising, so keep pushing strength. Peak if you want a hard test of the big three, or Powerbuilding to keep size and strength moving together.' };
+  else if (cnt('flat') + cnt('down') >= 2) plan = { name:'Hypertrophy Block', why:'Most lifts have stalled. A volume-focused block builds muscle to push the next strength block past this plateau.' };
+  else plan = { name:'Powerbuilding', why:'Mixed results. A blend of strength and volume work covers both.' };
+  const toRace = dayDiff(today, '2027-07-17');
+  const nextHtml = `
+    <div class="jlabel" style="margin-top:14px;">Next block ${done ? '' : '<span class="notes" style="text-transform:none;">(preview, firms up as the block ends)</span>'}</div>
+    <div class="card">${verdicts.map(x => `<div class="mbar"><div>${x.n}</div><div class="notes" style="margin:0;">${x.a ? x.a + ' → ' + x.r + ' (' + (x.pct >= 0 ? '+' : '') + x.pct.toFixed(1) + '%)' : '-'}</div><div class="tabular" style="text-align:right;">${icon[x.v]}</div></div><div class="notes" style="margin:-2px 0 6px;">${tips[x.v]}</div>`).join('')}
+      <div class="notes">Compares your best estimated max in the first two weeks with the last three weeks.</div></div>
+    <div class="card"><div class="exhead"><div class="exname">${plan.name}</div></div><div class="notes">${plan.why}</div>
+      <div class="notes" style="margin-top:6px;">Then: test week to confirm real maxes, and set new goals. The Spartan Super is ${toRace} days out, so there is room for about two more strength blocks before its plan starts on Apr 26.</div>
+      <button class="ghostbtn" id="rcPlans" style="margin-top:8px;">Browse plans</button></div>`;
+  document.getElementById('recapBody').insertAdjacentHTML('beforeend', nextHtml);
+  document.getElementById('rcPlans').onclick = () => { subs.plan = 'plans'; setView('plan'); };
   document.getElementById('recapSum').onclick = () => { document.getElementById('recapCmp').textContent = compareLb(s.ton) + ' Tap to see another.'; };
 }
 
