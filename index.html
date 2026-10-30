@@ -1426,8 +1426,9 @@ async function loadTrail(){
   try{ const b = await db.collection('bodyweight').orderBy('date','desc').limit(1).get(); if (b.docs.length && b.docs[0].data().lb) bw = Number(b.docs[0].data().lb); }catch(e){}
   let checkins = 0; try{ const r = await db.collection('readiness').limit(500).get(); checkins = r.docs.length; }catch(e){}
   const snap = await db.collection('logs').orderBy('date','asc').limit(5000).get();
-  const stats = trailStats(snap.docs.map(d => d.data()));
-  trailCache = { stats, fams: trailFamilies(stats, { maxes, bw, checkins }) };
+  const docs = snap.docs.map(d => d.data());
+  const stats = trailStats(docs);
+  trailCache = { docs, stats, fams: trailFamilies(stats, { maxes, bw, checkins }) };
   return trailCache;
 }
 const trailSeen = () => { try{ return JSON.parse(localStorage.getItem('cairn_trail') || 'null'); }catch(e){ return null; } };
@@ -1452,6 +1453,100 @@ function badgeSvg(lit){
   const ys = [[50,69,31,12],[48,54,25,11],[52,40,19,10],[49,28,12,8.5]];
   return `<svg viewBox="0 0 100 100" aria-hidden="true">${ys.map((e,i) => `<ellipse class="${i < lit ? 'lit' : ''}" cx="${e[0]}" cy="${e[1]}" rx="${e[2]}" ry="${e[3]}"/>`).join('')}</svg>`;
 }
+/* ===== Goals page and Block recap ===== */
+const RACE_DEFAULT = { name:'Spartan Super', date:'2027-07-17', place:'Grand Rapids' };
+const dayDiff = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000);
+async function renderGoals(){
+  const main = mainEl();
+  if (curSub() !== 'goals') return;
+  main.innerHTML = '<div id="goalBody"><div class="notes">Loading...</div></div>';
+  if (offline || !db){ document.getElementById('goalBody').innerHTML = '<div class="notes">Not connected.</div>'; return; }
+  let race = Object.assign({}, RACE_DEFAULT), d;
+  try{ const g = await db.doc('state/goals').get(); if (g.exists) goals = Object.assign({}, GOAL_DEFAULT, g.data()); }catch(e){}
+  try{ const r = await db.doc('state/race').get(); if (r.exists) race = Object.assign(race, r.data()); }catch(e){}
+  try{ d = await loadTrail(); }catch(e){ document.getElementById('goalBody').innerHTML = '<div class="notes">Could not load your logs.</div>'; return; }
+  if (curSub() !== 'goals') return;
+  const today = todayStr(), toRace = dayDiff(today, race.date);
+  const planStart = addDaysStr(mondayOf(race.date), -77), toPlan = dayDiff(today, planStart);
+  const lifts = [['squat','Squat'],['bench','Bench'],['dl','Deadlift']];
+  const goalKey = { squat:'squat', bench:'bench', dl:'deadlift' };
+  const rows = lifts.map(([id, name]) => {
+    const f = d.fams.find(x => x.id === id), cur = Math.round(f.value), goal = Number(goals[goalKey[id]]) || 0;
+    const frac = goal ? Math.max(0, Math.min(100, cur / goal * 100)) : 0;
+    const left = goal ? goal - cur : null;
+    return `<div class="card badge ${cur ? '' : 'locked'}">${badgeSvg(Math.round(frac / 25))}<div>
+      <div class="exhead"><div class="exname">${name}</div><div class="chips"><span class="chip">${goal ? Math.round(frac) + '%' : 'No goal'}</span></div></div>
+      <div class="notes"><b class="tabular" style="color:var(--fg)">${cur || '-'}</b> best estimate${goal ? ` of <b class="tabular" style="color:var(--fg)">${goal}</b> lb goal · ${left > 0 ? left + ' lb to go' : 'goal reached'}` : ''}</div>
+      <div class="bprog"><i style="width:${frac}%"></i></div></div></div>`;
+  }).join('');
+  document.getElementById('goalBody').innerHTML = `
+    <div class="card"><div class="exhead"><div class="exname">${esc(race.name)}</div><div class="chips"><span class="chip">${esc(race.place || '')}</span></div></div>
+      <div class="statrow">
+        <div class="stat"><div class="sv tabular">${toRace > 0 ? toRace : 0}</div><div class="sl">To race day</div></div>
+        <div class="stat"><div class="sv tabular">${toPlan > 0 ? toPlan : 'Now'}</div><div class="sl">${toPlan > 0 ? 'To plan start' : 'Plan window'}</div></div>
+        <div class="stat"><div class="sv" style="font-size:15px;">${fmtDate(race.date)}</div><div class="sl">Race day</div></div>
+      </div>
+      <div class="notes" style="margin-top:8px;">A 12 week race plan would start ${fmtDate(planStart)}.</div></div>
+    <div class="jlabel" style="margin-top:10px;">Strength goals</div>${rows}
+    <div class="notes">Bars use your best estimated max from logged sets, or your tested max if higher.</div>
+    <details class="card" style="margin-top:10px;"><summary style="cursor:pointer;">Edit goals</summary>
+      <div style="margin-top:8px;">${lifts.map(([id, name]) => `<label class="jlabel">${name} goal (lb)<input type="number" inputmode="numeric" id="gg_${id}" value="${goals[goalKey[id]] ?? ''}"></label>`).join('')}</div>
+      <div class="jlabel" style="margin-top:8px;">Race</div>
+      <input type="text" id="gr_name" value="${esc(race.name)}" placeholder="Race name"><input type="text" id="gr_place" value="${esc(race.place || '')}" placeholder="Place" style="margin-top:6px;"><input type="date" id="gr_date" value="${race.date}" style="margin-top:6px;">
+      <button class="btn" id="ggSave" style="margin-top:8px;">Save goals</button></details>`;
+  document.getElementById('ggSave').onclick = async () => {
+    const g = {}; lifts.forEach(([id]) => { const v = document.getElementById('gg_' + id).value; g[goalKey[id]] = v === '' ? null : Number(v); });
+    goals = Object.assign({}, goals, g);
+    const r = { name: document.getElementById('gr_name').value.trim() || RACE_DEFAULT.name, place: document.getElementById('gr_place').value.trim(), date: document.getElementById('gr_date').value || RACE_DEFAULT.date };
+    try{ await db.doc('state/goals').set(Object.assign({}, goals, { updatedAt: new Date().toISOString() })); await db.doc('state/race').set(Object.assign({}, r, { updatedAt: new Date().toISOString() })); }catch(e){ console.warn(e); }
+    renderGoals();
+  };
+}
+async function renderRecap(){
+  const main = mainEl();
+  if (curSub() !== 'recap') return;
+  main.innerHTML = '<div id="recapBody"><div class="notes">Loading...</div></div>';
+  if (offline || !db){ document.getElementById('recapBody').innerHTML = '<div class="notes">Not connected.</div>'; return; }
+  let d; try{ d = await loadTrail(); }catch(e){ document.getElementById('recapBody').innerHTML = '<div class="notes">Could not load your logs.</div>'; return; }
+  if (curSub() !== 'recap') return;
+  const real = WORKOUTS.filter(w => !w.synthetic), start = real[0].date, end = real[real.length - 1].date, today = todayStr();
+  const done = today > end, upTo = done ? end : today;
+  const docs = d.docs.filter(x => x && x.date >= start && x.date <= end);
+  const s = trailStats(docs);
+  const early = trailStats(docs.filter(x => x.date < addDaysStr(start, 14)));
+  const planned = real.filter(w => w.date <= upTo && plannedOn(w.date));
+  const hit = planned.filter(w => s.days.has(w.date)).length;
+  const wkNow = (real.filter(w => w.date <= upTo).pop() || real[0]).week, wkTotal = real[real.length - 1].week;
+  const names = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'], byDow = {};
+  s.days.forEach(ds => { const k = new Date(ds + 'T12:00:00').getDay(); byDow[k] = (byDow[k] || 0) + 1; });
+  const topDow = Object.keys(byDow).sort((a, b) => byDow[b] - byDow[a])[0];
+  const bestWk = Object.keys(s.weekTon).sort((a, b) => s.weekTon[b] - s.weekTon[a])[0];
+  const bestDay = Object.keys(s.dayTon).sort((a, b) => s.dayTon[b] - s.dayTon[a])[0];
+  const moved = [['squat','Squat'],['bench','Bench'],['deadlift','Deadlift']].map(([k, n]) => {
+    const a = Math.round(early.e1[k]), b = Math.round(s.e1[k]);
+    return `<div class="mbar"><div>${n}</div><div class="notes" style="margin:0;">${a ? a + ' → ' + b : (b ? b : '-')}</div><div class="tabular" style="text-align:right;">${a && b ? (b - a >= 0 ? '+' : '') + (b - a) + ' lb' : ''}</div></div>`;
+  }).join('');
+  document.getElementById('recapBody').innerHTML = `
+    <div class="card" id="recapSum" style="cursor:pointer;"><div class="jlabel">${done ? 'Block complete' : 'Block so far · Week ' + wkNow + ' of ' + wkTotal}</div>
+      <div class="recbig tabular">${Math.round(s.ton).toLocaleString()} <span class="notes" style="font-size:13px;font-weight:500;">lb lifted</span></div>
+      <div class="notes" id="recapCmp" style="margin-top:6px;">${compareLb(s.ton)} Tap to see another.</div></div>
+    <div class="statrow">
+      <div class="stat"><div class="sv tabular">${hit}<span class="notes" style="font-size:13px;"> of ${planned.length}</span></div><div class="sl">Training days</div></div>
+      <div class="stat"><div class="sv tabular">${s.prs}</div><div class="sl">PRs</div></div>
+      <div class="stat"><div class="sv tabular">${s.streak}</div><div class="sl">Week streak</div></div>
+    </div>
+    <div class="jlabel" style="margin-top:10px;">How your lifts moved</div>
+    <div class="card">${moved}<div class="notes">Best estimated max in the first two weeks, then the whole block.</div></div>
+    <div class="jlabel" style="margin-top:10px;">Highlights</div>
+    <div class="card">
+      ${bestWk ? `<div class="notes">Biggest week: <b class="tabular" style="color:var(--fg)">${Math.round(s.weekTon[bestWk]).toLocaleString()} lb</b>, week of ${fmtDate(bestWk)}.</div>` : ''}
+      ${bestDay ? `<div class="notes">Biggest day: <b class="tabular" style="color:var(--fg)">${Math.round(s.dayTon[bestDay]).toLocaleString()} lb</b> on ${fmtDate(bestDay)}.</div>` : ''}
+      ${topDow != null ? `<div class="notes">Most consistent day: <b style="color:var(--fg)">${names[topDow]}</b> (${byDow[topDow]} sessions).</div>` : ''}
+      <div class="notes"><b class="tabular" style="color:var(--fg)">${s.sets.toLocaleString()}</b> sets and <b class="tabular" style="color:var(--fg)">${s.reps.toLocaleString()}</b> reps logged.</div>
+    </div>`;
+  document.getElementById('recapSum').onclick = () => { document.getElementById('recapCmp').textContent = compareLb(s.ton) + ' Tap to see another.'; };
+}
+
 async function renderTrail(){
   const main = mainEl();
   if (curSub() !== 'trail') return;
@@ -1972,12 +2067,12 @@ function renderMaxes(){
 
 /* =================== CAIRN ADDITIONS =================== */
 const SUBS = {
-  progress: [['week','Week'],['history','Lifts'],['records','Records'],['balance','Balance'],['trail','Trail'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
+  progress: [['week','Week'],['goals','Goals'],['recap','Recap'],['history','Lifts'],['records','Records'],['balance','Balance'],['trail','Trail'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
   plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['exercises','Exercises'],['settings','Settings']]
 };
 const PROGRESS_GROUPS = [
-  ['Overview', [['week','Week'],['trail','Trail']]],
+  ['Overview', [['week','Week'],['goals','Goals'],['recap','Recap'],['trail','Trail']]],
   ['Lifting', [['history','Lifts'],['records','Records'],['strength','Strength'],['volume','Volume'],['sticking','Bench']]],
   ['Body', [['weight','Weight'],['balance','Balance'],['functional','Functional']]],
   ['Checks', [['bench','Tests'],['skips','Skips']]],
@@ -2046,6 +2141,8 @@ function renderSubView(){
   else if (s==='history') renderHistory();
   else if (s==='records') renderRecords();
   else if (s==='balance') renderBalance();
+  else if (s==='goals') renderGoals();
+  else if (s==='recap') renderRecap();
   else if (s==='trail') renderTrail();
   else if (s==='volume') renderVolume();
   else if (s==='weight') renderWeight();
