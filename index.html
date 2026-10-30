@@ -369,6 +369,21 @@ main{ gap:14px; padding-block:16px 96px; }
 @keyframes prRing{ 0%{ opacity:.55; transform:scale(.6) } 100%{ opacity:0; transform:scale(1.7) } }
 @keyframes prDot{ 0%{ opacity:0; transform:translateY(0) } 20%{ opacity:.9 } 100%{ opacity:0; transform:translateY(-70px) } }
 @media (prefers-reduced-motion: reduce){ .prfx *{ animation:none !important; opacity:1 !important; } .prfx .prring, .prfx .prdot{ display:none; } }
+/* set types: tap the set number to mark failure (F) or drop (D) */
+.setrow button.setno{ background:transparent; border:0; padding:0; font:inherit; font-size:12px; color:var(--faint); text-align:center; min-height:30px; }
+.setrow button.setno[data-stype="fail"], .setrow button.setno[data-stype="drop"]{ color:var(--accent-fg); background:var(--accent); border-radius:6px; font-weight:800; min-height:24px; }
+.setrow button.setno[data-stype="drop"]{ background:var(--yellow); }
+.sttag{ display:inline-block; margin-left:4px; font-size:10px; font-weight:800; color:var(--accent); }
+/* records page and calculator */
+.recsearch{ width:100%; background:var(--surface2); border:1px solid var(--line); color:var(--fg); border-radius:12px; padding:10px 12px; font:inherit; }
+.recbig{ font-size:26px; font-weight:800; line-height:1; }
+.recgrid{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.recchip{ background:var(--surface2); border-radius:10px; padding:5px 9px; font-size:12px; color:var(--muted); }
+.recchip b{ color:var(--fg); font-weight:700; }
+.calcrow{ display:flex; gap:8px; }
+.calcrow input{ flex:1; min-width:0; background:var(--surface2); border:1px solid var(--line); color:var(--fg); border-radius:10px; padding:9px 10px; font:inherit; }
+.calctab{ width:100%; border-collapse:collapse; font-size:13px; margin-top:6px; }
+.calctab td{ padding:4px 0; border-bottom:1px solid var(--line); } .calctab td:last-child{ text-align:right; }
 /* header */
 .topbar{ border-bottom:none; box-shadow:0 1px 0 var(--line); }
 .daytitle .wk{ font-size:12px; letter-spacing:.06em; text-transform:none; font-weight:600; opacity:.95; }
@@ -963,7 +978,7 @@ function renderDay(){
         const targetTxt = (setTw!=null ? setTw+'×' : '') + (setReps||'-') + (item.rpe? ' @'+item.rpe : '');
         rows.push(`
           <div class="setrow ${isPrefilled?'prefilled':''}" data-item="${item.k}" data-set="${i}">
-            <div class="setno tabular">${i+1}</div>
+            <button type="button" class="setno tabular" data-stype="${s.t||''}" aria-label="Set ${i+1}. Tap to mark failure or drop set">${s.t==='fail'?'F':s.t==='drop'?'D':i+1}</button>
             <div class="target">${esc(targetTxt)}${isPrefilled?'<span class="lastflag">last time</span>':''}</div>
             <input type="number" inputmode="decimal" placeholder="${setTw!=null?setTw:'lb'}" value="${wVal ?? ''}" data-field="w" aria-label="weight">
             <input type="number" inputmode="numeric" placeholder="${setReps||'reps'}" value="${rVal ?? ''}" data-field="r" aria-label="reps">
@@ -1136,6 +1151,12 @@ function wireDayInputs(){
     row.querySelectorAll('input').forEach(inp => {
       inp.addEventListener('change', () => { row.classList.remove('prefilled'); scheduleRowSave(row, key, idx); });
     });
+    const sn = row.querySelector('.setno');
+    if (sn) sn.addEventListener('click', () => {
+      const next = sn.dataset.stype === 'fail' ? 'drop' : sn.dataset.stype === 'drop' ? '' : 'fail';
+      sn.dataset.stype = next; sn.textContent = next === 'fail' ? 'F' : next === 'drop' ? 'D' : String(idx + 1);
+      if (!row.classList.contains('prefilled')) scheduleRowSave(row, key, idx, true);
+    });
     const btn = row.querySelector('.donebtn');
     btn.addEventListener('click', () => {
       const on = !btn.classList.contains('on');
@@ -1184,6 +1205,7 @@ function readRowValues(row){
     r: r===''?null:Number(r),
     rpe: rpe===''?null:Number(rpe),
     done: row.querySelector('.donebtn').classList.contains('on'),
+    t: (row.querySelector('.setno') && row.querySelector('.setno').dataset.stype) || null,
   };
 }
 function scheduleRowSave(row, itemKey, setIdx, immediate){
@@ -1207,6 +1229,17 @@ async function commitRow(row, itemKey, setIdx){
   logDoc[itemKey] = body;
   try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); pushSmartSyncSoon(); }
   catch(e){ console.warn('save failed', e); }
+  recCache = null;
+  if (sets.some(s => s && s.done)) markStarted(w.date);
+}
+/* the clock starts the first time a set is checked off that day */
+function markStarted(ds){ try{ if (!localStorage.getItem('cairn_start_'+ds)) localStorage.setItem('cairn_start_'+ds, new Date().toISOString()); }catch(e){} }
+function startedAt(ds){ try{ return (sessionDoc && sessionDoc.startedAt) || localStorage.getItem('cairn_start_'+ds) || null; }catch(e){ return null; } }
+function workoutMinutes(ds){
+  const s = startedAt(ds); if (!s) return null;
+  let last = 0; Object.values(logDoc).forEach(l => { const u = l && l.updatedAt ? Date.parse(l.updatedAt) : 0; if (u > last) last = u; });
+  const m = Math.round((last - Date.parse(s)) / 60000);
+  return m >= 1 && m < 360 ? m : null;
 }
 async function saveCheckItem(itemKey, done){
   if (offline) return;
@@ -1240,6 +1273,53 @@ async function commitCardio(row, itemKey){
   logDoc[itemKey] = body;
   try{ await db.collection('logs').doc(w.date+'__'+itemKey).set(body); pushSmartSyncSoon(); }
   catch(e){ console.warn('save failed', e); }
+}
+
+
+/* ===== records: all-time bests per exercise ===== */
+let recCache = null;
+function recName(n){ return String(n||'').replace(/\s*\((PRIMARY|secondary)\)/i, '').trim(); }
+async function renderRecords(){
+  const main = mainEl();
+  if (curSub() !== 'records') return;
+  main.innerHTML = `<div class="notes">All-time bests from your logged sets. Estimated max uses the Epley formula, and warm-ups, unchecked sets and sets over 12 reps are left out.</div>
+    <input class="recsearch" id="recQ" placeholder="Search exercises" aria-label="Search exercises"><div id="recList"><div class="notes">Loading...</div></div>`;
+  if (offline || !db){ document.getElementById('recList').innerHTML = '<div class="notes">Not connected.</div>'; return; }
+  try{
+    if (!recCache){
+      const snap = await db.collection('logs').orderBy('date','desc').limit(3000).get();
+      const by = {};
+      snap.docs.forEach(d => {
+        const x = d.data() || {}; if (!x.sets || !x.exercise || isWarm(x.exercise)) return;
+        const name = recName(x.exercise);
+        x.sets.forEach(s => {
+          const wt = Number(s && s.w), r = Number(s && s.r);
+          if (!(s && s.done) || !(wt > 0) || !(r >= 1 && r <= 12)) return;
+          const b = by[name] = by[name] || { name, e:null, heavy:null, reps:{}, n:0, last:'' };
+          b.n++; if (x.date > b.last) b.last = x.date;
+          const e = e1rm(wt, r);
+          if (!b.e || e > b.e.v) b.e = { v:e, w:wt, r, date:x.date };
+          if (!b.heavy || wt > b.heavy.w || (wt === b.heavy.w && r > b.heavy.r)) b.heavy = { w:wt, r, date:x.date };
+          [1,3,5,8,10].forEach(n => { if (r >= n && (!b.reps[n] || wt > b.reps[n].w)) b.reps[n] = { w:wt, r, date:x.date }; });
+        });
+      });
+      recCache = Object.values(by);
+    }
+    const main3 = /^(?:back |front )?(squat|bench|deadlift)/i;
+    const draw = () => {
+      const q = (document.getElementById('recQ').value || '').toLowerCase();
+      const list = recCache.filter(b => !q || b.name.toLowerCase().includes(q))
+        .sort((a,b) => (main3.test(b.name) - main3.test(a.name)) || (b.e.v - a.e.v));
+      document.getElementById('recList').innerHTML = list.length ? list.map(b => `
+        <div class="card"><div class="exhead"><div class="exname">${esc(b.name)}</div><div class="chips"><span class="chip">${b.n} sets</span></div></div>
+          <div class="recbig tabular">${Math.round(b.e.v)} <span class="notes" style="font-size:13px;font-weight:500;">lb est. max</span></div>
+          <div class="notes">From ${b.e.w} × ${b.e.r} on ${fmtDate(b.e.date)}. Heaviest: ${b.heavy.w} × ${b.heavy.r} (${fmtDate(b.heavy.date)}).</div>
+          <div class="recgrid">${[1,3,5,8,10].filter(n => b.reps[n]).map(n => `<span class="recchip">${n}+ reps <b>${b.reps[n].w}</b></span>`).join('')}</div>
+        </div>`).join('') : '<div class="notes">No logged sets match yet.</div>';
+    };
+    draw();
+    document.getElementById('recQ').oninput = draw;
+  }catch(e){ console.warn(e); const l = document.getElementById('recList'); if (l) l.innerHTML = '<div class="notes">Could not load records.</div>'; }
 }
 
 /* ===== history view ===== */
@@ -1322,7 +1402,7 @@ function drawHistory(){
     let maxW = null;
     (doc.sets||[]).forEach((s,i) => {
       if (s.w != null || s.r != null || s.rpe != null){
-        rows.push(`<tr><td class="tabular">${fmtDate(doc.date)}</td><td class="tabular">${i+1}</td><td class="tabular">${s.w ?? '-'}</td><td class="tabular">${s.r ?? '-'}</td><td class="tabular mut">${s.rpe ?? '-'}</td></tr>`);
+        rows.push(`<tr><td class="tabular">${fmtDate(doc.date)}</td><td class="tabular">${i+1}${s.t ? '<span class="sttag">' + (s.t === 'fail' ? 'F' : 'D') + '</span>' : ''}</td><td class="tabular">${s.w ?? '-'}</td><td class="tabular">${s.r ?? '-'}</td><td class="tabular mut">${s.rpe ?? '-'}</td></tr>`);
         if (s.w != null) maxW = maxW==null ? s.w : Math.max(maxW, s.w);
       }
     });
@@ -1595,7 +1675,21 @@ function renderMaxes(){
       <button class="savebtn" id="saveMaxes" ${offline?'disabled':''}>Save</button>
     </div>
     <div class="savedflag" id="savedFlag" hidden>Saved. Targets updated.</div>
+    <div class="card" style="margin-top:14px;">
+      <div class="exname">Quick 1RM calculator</div>
+      <div class="notes">Enter a set to estimate your one-rep max and the weights below it. Most accurate under 10 reps.</div>
+      <div class="calcrow"><input id="calcW" type="number" inputmode="decimal" placeholder="Weight (lb)" aria-label="Weight"><input id="calcR" type="number" inputmode="numeric" placeholder="Reps" aria-label="Reps"></div>
+      <div id="calcOut" class="notes"></div>
+    </div>
   `;
+  const calc = () => {
+    const w = Number(document.getElementById('calcW').value), r = Number(document.getElementById('calcR').value), out = document.getElementById('calcOut');
+    if (!(w > 0) || !(r >= 1)){ out.innerHTML = ''; return; }
+    const ep = e1rm(w, r), br = r < 37 ? w * 36 / (37 - r) : ep, est = Math.round((ep + br) / 2);
+    out.innerHTML = `<div class="recbig tabular" style="color:var(--fg)">${est} <span class="notes" style="font-size:13px;font-weight:500;">lb est. max</span></div>${r > 10 ? '<div class="notes">Over 10 reps, so treat this as a rough guess.</div>' : ''}
+      <table class="calctab tabular">${[95,90,85,80,75,70,65,60].map(pc => `<tr><td>${pc}%</td><td>${roundTo5(est * pc / 100)} lb</td></tr>`).join('')}</table>`;
+  };
+  document.getElementById('calcW').oninput = calc; document.getElementById('calcR').oninput = calc;
   if (!offline){
     document.getElementById('saveMaxes').onclick = async () => {
       const body = {};
@@ -1614,7 +1708,7 @@ function renderMaxes(){
 
 /* =================== CAIRN ADDITIONS =================== */
 const SUBS = {
-  progress: [['week','Week'],['history','Lifts'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
+  progress: [['week','Week'],['history','Lifts'],['records','Records'],['volume','Volume'],['weight','Weight'],['strength','Strength'],['functional','Functional'],['sticking','Bench'],['skips','Skips'],['bench','Tests']],
   body: [['readiness','Readiness'],['flares','Flare-ups'],['flareplan','Flare plan'],['mobility','Mobility']],
   plan: [['maxes','Maxes'],['roadmap','Roadmap'],['plans','Plans'],['exercises','Exercises'],['settings','Settings']]
 };
@@ -1668,6 +1762,7 @@ function renderSubView(){
   const s = subs[view];
   if (s==='week') renderWeek();
   else if (s==='history') renderHistory();
+  else if (s==='records') renderRecords();
   else if (s==='volume') renderVolume();
   else if (s==='weight') renderWeight();
   else if (s==='functional') renderFunctional();
@@ -1953,7 +2048,9 @@ function finishBarHtml(){
   const { all } = dayItems();
   if (!all.some(it => it.sets!=null && !it.hidden && !isWarm(it.ex))) return '';
   const fin = !!(sessionDoc && sessionDoc.finishedAt);
-  return `<button class="savebtn finishbtn" id="finishBtn">${fin ? 'View recap' : 'Finish workout'}</button>`;
+  const st = !fin ? startedAt(WORKOUTS[curIdx].date) : null, mins = st ? workoutMinutes(WORKOUTS[curIdx].date) : null;
+  const clock = st ? `<div class="notes" style="text-align:center;margin-bottom:6px;">Started ${new Date(st).toLocaleTimeString([], { hour:'numeric', minute:'2-digit' })}${mins ? ' · ' + mins + ' min in' : ''}</div>` : '';
+  return clock + `<button class="savebtn finishbtn" id="finishBtn">${fin ? 'View recap' : 'Finish workout'}</button>`;
 }
 function computeRecap(){
   const { all } = dayItems();
@@ -1993,7 +2090,7 @@ function openRecap(){
   const bars = entries.map(([m,n]) => `
     <div class="mbar"><div>${esc(m)}</div><div class="mtrack"><div class="mfill" style="width:${Math.round(n/max*100)}%"></div></div><div class="tabular" style="text-align:right">${n} ${n===1?'set':'sets'}</div></div>`).join('');
   openSheet(`
-    <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">${fin ? 'Workout recap' : 'Finish workout?'}</h2><div class="notes">${esc(w.focus)} · ${fmtDate(w.date)}</div></div>
+    <div><div class="brand">${CAIRN_LOGO}CAIRN</div><h2 style="font-size:24px;">${fin ? 'Workout recap' : 'Finish workout?'}</h2><div class="notes">${esc(w.focus)} · ${fmtDate(w.date)}${(() => { const m = fin && sessionDoc.durMin ? sessionDoc.durMin : workoutMinutes(w.date); return m ? ' · ' + (m >= 60 ? Math.floor(m/60) + ' h ' + (m%60) + ' min' : m + ' min') : ''; })()}</div></div>
     ${r.sets ? `
       <div class="statrow">
         <div class="stat"><div class="sv tabular">${r.sets}</div><div class="sl">Working sets</div></div>
@@ -2012,7 +2109,7 @@ function openRecap(){
   document.getElementById('recapClose').onclick = closeSheet;
   document.getElementById('recapSave').onclick = async () => {
     const body = { date:w.date, week:w.week, focus:w.focus, muscles:r.muscles, sets:r.sets, vol:r.vol, top:r.top||null, extras:r.extras,
-      finishedAt: (sessionDoc && sessionDoc.finishedAt) || new Date().toISOString(), updatedAt:new Date().toISOString() };
+      finishedAt: (sessionDoc && sessionDoc.finishedAt) || new Date().toISOString(), startedAt: startedAt(w.date), durMin: workoutMinutes(w.date) || (sessionDoc && sessionDoc.durMin) || null, updatedAt:new Date().toISOString() };
     sessionDoc = body;
     try{ await db.doc('sessions/'+w.date).set(body); }catch(e){ console.warn('save session failed', e); }
     closeSheet();
@@ -3982,6 +4079,25 @@ async function exportBackup(){
     msg.textContent = 'Exported ' + Object.values(out.data).reduce((n,o) => n + Object.keys(o).length, 0) + ' records.';
   }catch(e){ console.warn(e); msg.textContent = 'Export failed.'; }
 }
+async function exportCsv(){
+  const msg = document.getElementById('bkMsg');
+  if (!db || offline){ msg.textContent = 'Not connected.'; return; }
+  msg.textContent = 'Building CSV...';
+  try{
+    const snap = await db.collection('logs').orderBy('date','asc').limit(5000).get();
+    const q = (v) => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const rows = [['date','week','day','exercise','set','weight_lb','reps','rpe','set_type','done','minutes','distance','heart_rate','incline']];
+    snap.docs.forEach(d => {
+      const x = d.data() || {};
+      if (x.sets) x.sets.forEach((s, i) => { if (s && (s.w != null || s.r != null || s.done)) rows.push([x.date, x.week, x.day, recName(x.exercise), i+1, s.w, s.r, s.rpe, s.t === 'fail' ? 'failure' : s.t === 'drop' ? 'drop' : '', s.done ? 'yes' : '', '', '', '', '']); });
+      else if (x.time != null || x.dist != null || x.hr != null) rows.push([x.date, x.week, x.day, recName(x.exercise), '', '', '', '', '', x.done ? 'yes' : '', x.time, x.dist, x.hr, x.incline]);
+    });
+    const blob = new Blob([rows.map(r => r.map(q).join(',')).join('\n')], { type:'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cairn-sets-' + todayStr() + '.csv';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    msg.textContent = 'Exported ' + (rows.length - 1) + ' rows.';
+  }catch(e){ console.warn(e); msg.textContent = 'CSV export failed.'; }
+}
 async function importBackup(file){
   const msg = document.getElementById('bkMsg');
   if (!db || offline){ msg.textContent = 'Not connected.'; return; }
@@ -4075,7 +4191,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Backup</div>
       <div class="notes">Your data lives in your own database. Export a copy any time, or restore one.</div>
-      <div class="rbtns"><button class="ghostbtn" id="bkExport">Export backup</button><button class="ghostbtn" id="bkImport">Import backup</button></div>
+      <div class="rbtns"><button class="ghostbtn" id="bkExport">Export backup</button><button class="ghostbtn" id="bkImport">Import backup</button><button class="ghostbtn" id="bkCsv">Export CSV</button></div>
       <input type="file" id="bkFile" accept="application/json,.json" hidden>
       <div class="notes" id="bkMsg"></div>
     </div>
@@ -4139,6 +4255,7 @@ function renderSettings(){
   document.getElementById('acctLine').textContent = u ? ('Signed in as ' + u.email) : 'Not signed in.';
   document.getElementById('acctOut').onclick = () => { if (window.cairnSignOut) window.cairnSignOut(); };
   document.getElementById('bkExport').onclick = exportBackup;
+  document.getElementById('bkCsv').onclick = exportCsv;
   document.getElementById('bkImport').onclick = () => document.getElementById('bkFile').click();
   document.getElementById('bkFile').onchange = (e) => { const f = e.target.files[0]; if (f) importBackup(f); e.target.value = ''; };
   drawPushCard();
