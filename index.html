@@ -693,10 +693,15 @@ function dayItems(){
       k, ex: c.ex, raw: eff ? `${eff}x${c.reps||''}` : null,
       sets: eff, baseSets: base, reps: c.reps||null, lift:null, pct:null, tw: c.tw ?? null,
       rpe: c.rpe || null, rest: null, notes: c.notes || null, muscles: c.muscles || [],
-      hidden:false, custom:true, customId: c.id,
+      hidden:false, custom:true, customId: c.id, after: c.after || null,
     };
   });
-  return { program, custom, all: program.concat(custom) };
+  /* a swapped-in exercise takes the place of the one it replaced; other additions go at the end */
+  let all = program.slice();
+  const tail = [];
+  custom.forEach(c => { const i = c.after ? all.findIndex(x => x.k === c.after) : -1; if (i >= 0){ let j = i + 1; while (j < all.length && all[j].custom && all[j].after === c.after) j++; all.splice(j, 0, c); } else tail.push(c); });
+  all = all.concat(tail);
+  return { program, custom, all };
 }
 
 /* supersets: a linked exercise alternates with the next visible lift. Only the day you are viewing is considered. */
@@ -2246,6 +2251,12 @@ const READY_TEXT = {
   yellow:['Yellow','Recommended plan: one fewer set on the main lifts. Stop each set around RPE 7.'],
   red:['Red','Recommended plan: two fewer sets and about 10% off the weights. Or trade this session for mobility and Zone 2. Nothing here is worth a flare-up.']
 };
+/* Advice follows the kind of day: lifting days trim sets and weight, cardio and mobility days keep it easy. */
+const READY_EASY = {
+  yellow:'Recommended plan: keep it easy. Stay in Zone 2 and shorten it by about a quarter if it feels like work.',
+  red:'Recommended plan: cut it short, keep the pace conversational, or trade it for a walk and mobility. Nothing here is worth a flare-up.'
+};
+function liftDay(){ return dayItems().all.some(i => !i.custom ? (!i.hidden && i.sets != null && !isWarm(i.ex) && i.lift) : (i.sets != null)); }
 let readyDoc = null, unsubReady = null, readyEditing = false, readyChain = Promise.resolve();
 function pts(list, v){ const r = list.find(x => x[0]===v); return r ? r[2] : null; }
 function readyLevel(d){
@@ -2394,7 +2405,7 @@ function openSwapSheet(key){
     hideKey(it.k); dayEdit.all_ = null;
     dayItems().all.forEach(x => { if (x.ex === base+' — warm-up') hideKey(x.k); });
     dayEdit.hidden = hid;
-    dayEdit.custom = (dayEdit.custom||[]).concat([{ id:'c'+Date.now(), ex:e.n, sets:it.sets||null, reps:it.reps||null, tw:null, rpe:it.rpe||null, notes:'Swapped in for ' + base + '.', muscles: (e.p && e.p.length ? e.p.concat(e.s||[]) : [...mine]) }]);
+    dayEdit.custom = (dayEdit.custom||[]).concat([{ id:'c'+Date.now(), after: it.k, ex:e.n, sets:it.sets||null, reps:it.reps||null, tw:null, rpe:it.rpe||null, notes:'Swapped in for ' + base + '.', muscles: (e.p && e.p.length ? e.p.concat(e.s||[]) : [...mine]) }]);
     await saveDayEdit(); closeSheet(); renderDay();
   };
   openSheet(`<div><div class="brand">SWAP FOR TODAY</div><h2 style="font-size:22px;">${esc(base)}</h2><div class="notes">Replaces it for today only. Your program is unchanged.</div></div>
@@ -2453,10 +2464,11 @@ function readinessHtml(){
     const sw = swapOptions();
     const isTest = w.phase === 'TEST WEEK';
     const sum = `Sleep ${d.sleep} · Energy ${d.energy} · Back/hips/knees ${d.pain==='none'?'fine':d.pain}`;
-    const recLine = (rl && rl !== 'deload')
+    const lift = liftDay();
+    const recLine = (rl && rl !== 'deload' && lift)
       ? `<div class="reclin"><span>Plan changed based on feel.</span><button class="ghostbtn" id="readyRevert">Tap to revert</button></div>`
-      : ((lv.level!=='green' && d.reverted && !isTest) ? `<div class="reclin"><span>Showing the full plan.</span><button class="ghostbtn" id="readyRevert">Use recommended</button></div>` : '');
-    const text = isTest && lv.level!=='green' ? 'Test week: the plan is left as written. If you feel this low, think about pushing the test back a day or two.' : t[1];
+      : ((lv.level!=='green' && d.reverted && !isTest && lift) ? `<div class="reclin"><span>Showing the full plan.</span><button class="ghostbtn" id="readyRevert">Use recommended</button></div>` : '');
+    const text = isTest && lv.level!=='green' ? 'Test week: the plan is left as written. If you feel this low, think about pushing the test back a day or two.' : (lift || lv.level==='green' ? t[1] : READY_EASY[lv.level]);
     return `
       <div class="ready ${lv.level}">
         <div class="rhead"><span class="rdot"></span><div class="rtitle">${t[0]}</div><button class="ghostbtn" id="readyEdit">Edit</button></div>
