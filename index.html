@@ -2785,13 +2785,21 @@ async function pushSyncPrefs(){
 }
 /* Rest alerts: scheduled to arrive just after the timer ends, cancelled if the app is open and handles it itself. */
 function pushRestOn(){ return pushSupported() && settings.push && settings.push.on && pushPrefs().rest && typeof Notification !== 'undefined' && Notification.permission === 'granted'; }
-async function pushRestSchedule(){
-  if (!restT || !pushRestOn()) return;
-  try{ const sub = await pushSub(false); if (sub) await pushCall('/schedule', { endpoint: sub.endpoint, id:'rest', at: restT.end + 3000, title:'Rest is up', body: restT.label + ': next set', tag:'rest' }); }catch(e){}
+let pushQ = Promise.resolve();
+const pushSeq = fn => (pushQ = pushQ.then(fn, fn));
+function pushRestSchedule(){
+  if (!restT || !pushRestOn()) return Promise.resolve();
+  return pushSeq(async () => {
+    if (!restT) return;
+    try{ const sub = await pushSub(false); if (sub && restT) await pushCall('/schedule', { endpoint: sub.endpoint, id:'rest', at: restT.end + 3000, title:'Rest is up', body: restT.label + ': next set', tag:'rest' }); }catch(e){}
+  });
 }
-async function pushRestCancel(){
-  if (!pushRestOn()) return;
-  try{ const sub = await pushSub(false); if (sub) await pushCall('/cancel', { endpoint: sub.endpoint, id:'rest' }); }catch(e){}
+function pushRestCancel(){
+  if (!pushRestOn()) return Promise.resolve();
+  return pushSeq(async () => {
+    if (restT && !restT.fired) return;
+    try{ const sub = await pushSub(false); if (sub) await pushCall('/cancel', { endpoint: sub.endpoint, id:'rest' }); }catch(e){}
+  });
 }
 
 /* Missed-workout nudge and deload heads-up. Both are optional and off by default.
@@ -2927,7 +2935,7 @@ function tickRest(){
   document.body.classList.add('restshown');
   document.getElementById('rLabel').textContent = restT.label;
   if (left<=0){
-    if (!restT.fired){ restT.fired = true; restT.doneAt = Date.now(); alertRest(); if (document.visibilityState === 'visible') pushRestCancel(); }
+    if (!restT.fired){ restT.fired = true; restT.doneAt = Date.now(); if (Date.now() - restT.end < 4000) alertRest(); if (document.visibilityState === 'visible') pushRestCancel(); }
     bar.classList.add('go');
     document.getElementById('rTime').textContent = 'Go';
     document.getElementById('rFill').style.width = '100%';
@@ -4681,6 +4689,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
+      <div class="notes" style="opacity:.6;">App version v8</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
