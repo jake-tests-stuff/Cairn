@@ -1402,7 +1402,19 @@ function trailFamilies(s, ctx){
   const bw = ctx.bw || 0, est = {};
   Object.keys(BIG3).forEach(k => { est[k] = Math.max(Number(ctx.maxes[k]) || 0, Math.round(s.e1[k])); });
   const nf = (n) => Math.round(n).toLocaleString();
-  const deloadDone = WORKOUTS.filter(w => w.phase === 'Deload' && s.days.has(w.date)).map(w => w.week).filter((v,i,a) => a.indexOf(v) === i).length;
+  /* a deload week only counts once the whole week was trained: every planned day, or (after the week ends) at least 70% of them */
+  const deloadDone = (() => {
+    const weeks = {};
+    WORKOUTS.filter(w => w.phase === 'Deload' && !w.synthetic).forEach(w => { const k = w.week; (weeks[k] = weeks[k] || []).push(w); });
+    const today = todayStr();
+    return Object.values(weeks).filter(days => {
+      const plan = days.filter(w => !/^rest$/i.test(String(w.focus || '').trim()));
+      if (!plan.length) return false;
+      const trained = plan.filter(w => s.days.has(w.date)).length;
+      const over = days.reduce((m, w) => w.date > m ? w.date : m, '') < today;
+      return trained >= plan.length || (over && trained >= Math.ceil(plan.length * 0.7));
+    }).length;
+  })();
   const F = (cat, id, name, value, tiers, fmt, unit, hint) => ({ cat, id, name, value, tiers, fmt: fmt || nf, unit: unit || '', hint: hint || '' });
   return [
     F('Volume','life','Lifetime weight', s.ton, [50000,100000,250000,500000,1000000,2500000], nf, 'lb', 'Every checked set, weight times reps.'),
@@ -4693,7 +4705,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v10</div>
+      <div class="notes" style="opacity:.6;">App version v11</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
