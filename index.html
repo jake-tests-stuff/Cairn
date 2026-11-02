@@ -635,6 +635,7 @@ let histExercise = EXNAMES[0];
 let histRows = [];
 let editMode = false;
 let dayEdit = { hidden: [], custom: [], setAdj: {}, links: [] }; // per-day overrides for the currently viewed date
+let priorPerf2 = {};
 let priorPerf = {}; // exercise name -> most recent prior session's sets array
 let showAddForm = false;
 
@@ -780,7 +781,7 @@ function watchDayLogs(){
 /* pull the most recent PRIOR session's numbers for each exercise on this day, so an
    unfilled set can start from what was actually done last time instead of a blank field */
 async function loadPriorPerf(){
-  priorPerf = {};
+  priorPerf = {}; priorPerf2 = {};
   if (offline || !db) { renderDay(); return; }
   const w = WORKOUTS[curIdx];
   const names = Array.from(new Set(w.items.filter(it => it.sets != null).map(it => it.ex)));
@@ -788,8 +789,9 @@ async function loadPriorPerf(){
     try{
       const snap = await db.collection('logs')
         .where('exercise','==',ex).where('date','<',w.date)
-        .orderBy('date','desc').limit(1).get();
+        .orderBy('date','desc').limit(2).get();
       if (snap.docs.length && snap.docs[0].data().sets) priorPerf[ex] = snap.docs[0].data().sets;
+      if (snap.docs.length > 1 && snap.docs[1].data().sets) priorPerf2[ex] = snap.docs[1].data().sets;
     }catch(e){ /* leave unfilled if the lookup fails */ }
   }));
   renderDay();
@@ -1027,22 +1029,27 @@ function renderDay(){
       const log = logDoc[item.k] || { sets: [] };
       const prior0 = priorPerf[item.ex] || null;
       const prior = (prior0 && item.ramp && prior0.length < item.ramp.length) ? null : prior0;
+      const planDriven = !!(item.lift && (item.tw != null || item.pct != null));
+      const sug = (!planDriven && prior) ? suggestNext(item, prior, priorPerf2[item.ex]) : null;
+      if (sug) chips.push(`<span class="chip rec">try ${sug.w} lb${sug.reps ? ' &times; ' + sug.reps : ''}</span>`);
       const rows = [];
       for (let i=0;i<item.sets;i++){
         const s = (log.sets && log.sets[i]) || {};
         const rp = (item.ramp && item.ramp[i]) || null;
         const setTw = rp ? roundTo5((maxes[item.lift] ?? 0) * rp.pct * recScale()) : tw;
         const setReps = rp ? rp.reps : item.reps;
-        const p = (!log.sets || !log.sets[i]) && prior ? (prior[i] || null) : null; // only offer a prior value when nothing's logged today yet
-        const wVal = s.w ?? (p ? p.w : null);
-        const rVal = s.r ?? (p ? p.r : null);
+        const fresh = !log.sets || !log.sets[i];
+        const p0 = fresh && prior ? (prior[i] || null) : null; // only offer a prior value when nothing's logged today yet
+        const p = p0 || (fresh && sug ? { w:null, r:null, rpe:null } : null);
+        const wVal = s.w ?? (sug && fresh ? sug.w : (p ? p.w : null));
+        const rVal = s.r ?? (sug && fresh && sug.reps ? sug.reps : (p ? p.r : null));
         const rpeVal = s.rpe ?? (p ? p.rpe : null);
         const isPrefilled = !!(p && s.w == null && s.r == null);
         const targetTxt = (setTw!=null ? setTw+'×' : '') + (setReps||'-') + (item.rpe? ' @'+item.rpe : '');
         rows.push(`
           <div class="setrow ${isPrefilled?'prefilled':''}" data-item="${item.k}" data-set="${i}">
             <button type="button" class="setno tabular" data-stype="${s.t||''}" aria-label="Set ${i+1}. Tap to mark failure or drop set">${s.t==='fail'?'F':s.t==='drop'?'D':i+1}</button>
-            <div class="target">${esc(targetTxt)}${isPrefilled?'<span class="lastflag">last time</span>':''}</div>
+            <div class="target">${esc(targetTxt)}${isPrefilled?'<span class="lastflag">'+(sug?'suggested':'last time')+'</span>':''}</div>
             <input type="number" inputmode="decimal" placeholder="${setTw!=null?setTw:'lb'}" value="${wVal ?? ''}" data-field="w" aria-label="weight">
             <input type="number" inputmode="numeric" placeholder="${setReps||'reps'}" value="${rVal ?? ''}" data-field="r" aria-label="reps">
             <input type="number" inputmode="numeric" placeholder="rpe" value="${rpeVal ?? ''}" data-field="rpe" aria-label="rpe">
@@ -1094,6 +1101,7 @@ function renderDay(){
         ${muscleChips || miniFig ? `<div class="mrow"><div class="mchips">${muscleChips}</div>${miniFig}</div>` : ''}
         ${setAdjRow}
         ${body}
+        ${(() => { const pr = priorPerf[item.ex]; const sg = (!(item.lift && (item.tw != null || item.pct != null)) && pr) ? suggestNext(item, pr, priorPerf2[item.ex]) : null; return sg ? `<div class="notes">${esc(sg.note)}</div>` : ''; })()}
         ${item.notes ? `<div class="notes">${esc(item.notes)}</div>` : ''}
         ${exNoteHtml(item.ex)}
         ${editControls}
@@ -3702,6 +3710,61 @@ function mainLiftOf(ex){ const m = MAIN_RE.exec(ex||''); return m ? m[1].toLower
 function epley(w, r){ return r<=1 ? w : w*(1+r/30); }
 function lbl(n){ return Number(n).toLocaleString(); }
 
+
+/* ---- next-session suggestion for lifts the plan does not set a weight for (double progression) ---- */
+function parseRepRange(reps){
+  const m = String(reps == null ? '' : reps).match(/^(\d+)(?:\s*-\s*(\d+))?\s*(?:\/\s*(?:leg|side|arm))?$/i);
+  if (!m) return null;
+  const lo = Number(m[1]), hi = m[2] ? Number(m[2]) : lo;
+  return hi >= lo ? { lo, hi } : null;
+}
+function parseRpeTop(r){
+  const m = String(r == null ? '' : r).match(/(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?/);
+  return m ? parseFloat(m[2] || m[1]) : null;
+}
+function progInc(name, w){
+  if (/squat|deadlift|leg press|hip thrust|romanian|rdl|lunge|good morning/i.test(name || '')) return w >= 135 ? 10 : 5;
+  return 5;
+}
+/* sets: the logged sets of one session. Returns null when there is nothing sensible to say. */
+function sessionRead(sets, rr, tgt){
+  const work = (sets || []).filter(s => s && Number(s.w) > 0 && Number(s.r) > 0 && s.t !== 'drop');
+  if (!work.length) return null;
+  const failed = work.some(s => s.t === 'fail');
+  const w = Math.max(...work.map(s => Number(s.w)));
+  const atW = work.filter(s => Number(s.w) === w);
+  const reps = atW.map(s => Number(s.r));
+  const rpes = atW.map(s => Number(s.rpe)).filter(x => isFinite(x) && x > 0);
+  const avg = rpes.length ? rpes.reduce((a, b) => a + b, 0) / rpes.length : null;
+  const minR = Math.min(...reps);
+  return { w, n: atW.length, minR, avg, failed, hitLo: !failed && minR >= rr.lo, hitTop: !failed && minR >= rr.hi };
+}
+function suggestNext(item, prior, prior2){
+  if (!item || !item.sets || isWarm(item.ex)) return null;
+  let rr = parseRepRange(item.reps);
+  const noRange = !rr;
+  if (noRange){ const w0 = (prior || []).filter(s => s && Number(s.w) > 0 && Number(s.r) > 0 && s.t !== 'drop'); if (!w0.length) return null; const m = Math.min(...w0.map(s => Number(s.r))); rr = { lo:m, hi:m }; }
+  const tgt = parseRpeTop(item.rpe) ?? 8;
+  const a = sessionRead(prior, rr, tgt); if (!a) return null;
+  const inc = progInc(item.ex, a.w);
+  const rpeTxt = a.avg != null ? ', RPE ' + (Math.round(a.avg * 2) / 2) : '';
+  if (!a.hitLo || a.n < Math.max(1, item.sets - 1))
+    return { kind:'repeat', w:a.w, reps:rr.hi === rr.lo ? rr.lo : null, note:`Last time you did not get ${rr.lo}${rr.hi !== rr.lo ? '+' : ''} reps on every set at ${a.w}. Same weight again.` };
+  if (a.avg != null && a.avg > tgt + 1)
+    return { kind:'hold', w:a.w, reps:null, note:`Last time felt harder than RPE ${tgt}. Hold ${a.w} and aim for clean reps.` };
+  if (noRange && a.avg == null)
+    return { kind:'ok', w:a.w, reps:a.minR, note:`${a.minR} reps at ${a.w} last time. Log RPE and I can say when to add weight.` };
+  if (a.hitTop && (a.avg == null || a.avg <= tgt + 0.5) && !(noRange && a.avg > tgt - 0.5)){
+    const b = prior2 ? sessionRead(prior2, rr, tgt) : null;
+    const easyTwice = a.avg != null && a.avg <= tgt - 1.5 && b && b.avg != null && b.avg <= tgt - 1.5 && b.w === a.w && b.hitTop;
+    return { kind:'up', w:a.w + inc, reps:noRange ? a.minR : rr.lo, addSet: !!easyTwice && item.sets < 6,
+      note:noRange ? `${a.minR} reps on every set at ${a.w}${rpeTxt}. That was easy. Add ${inc} lb.` : `You hit ${rr.hi} on every set at ${a.w}${rpeTxt}. Add ${inc} lb and start back at ${rr.lo} reps.` + (easyTwice && item.sets < 6 ? ` It has been easy two sessions running, so an extra set is also fine.` : '') };
+  }
+  if (rr.hi > rr.lo)
+    return { kind:'reps', w:a.w, reps:Math.min(rr.hi, a.minR + 1), note:`Same ${a.w} lb. Try ${Math.min(rr.hi, a.minR + 1)} reps on each set. At ${rr.hi} on every set, the weight goes up.` };
+  return { kind:'ok', w:a.w, reps:null, note:`You hit every rep at ${a.w}${rpeTxt}. Repeat it, and add weight once it feels easier.` };
+}
+
 /* ---- progression suggestion (shown in the workout recap; suggestion only) ---- */
 function progKey(date, lift){ return 'cairn_prog_' + date + '_' + lift; }
 function progressionSuggestions(){
@@ -3727,13 +3790,14 @@ function progressionSuggestions(){
       s = { kind:'info', text:`${name}: every rep was hit. Log RPE on the main sets and I can say whether to move up.` };
     } else {
       const d = avg - tgtRpe;
-      if (d <= -0.5 && cur){
+      const inDeload = w.phase === 'Deload' || deloadOn(w.date);
+      if (d <= -0.5 && cur && !inDeload){
         const inc = d <= -1.5 ? (lift==='bench' ? 5 : 10) : 5;
         const nm = Math.min(cur + inc, Math.floor(cur * 1.03 / 5) * 5);
         if (nm > cur) s = { kind:'up', lift, newMax:nm, text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. That's easier than planned. You could nudge your ${name.toLowerCase()} max from ${cur} to ${nm}.` };
       }
       if (!s && d >= 1) s = { kind:'down', text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. Harder than planned. Hold your max, and think about taking a set or 5% off next session.` };
-      if (!s) s = { kind:'ok', text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. Right on plan. Keep the max where it is.` };
+      if (!s) s = { kind:'ok', text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. Right on plan. Take the planned weight next session. The max stays where it is.` };
     }
     s.lift = lift; s.date = w.date; out.push(s);
   });
@@ -4705,7 +4769,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v11</div>
+      <div class="notes" style="opacity:.6;">App version v12</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
