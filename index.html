@@ -888,8 +888,8 @@ function renderShell(){
   document.getElementById('todayPill').onclick = () => { curIdx = findTodayIdx(); editMode=false; showAddForm=false; watchDayLogs(); watchDayEdit(); loadPriorPerf(); renderDay(); };
   document.getElementById('editToggle').onclick = () => { editMode = !editMode; showAddForm=false; renderDay(); };
   document.querySelectorAll('.tabbtn').forEach(b => b.onclick = () => setView(b.dataset.view));
-  document.getElementById('rPlus').onclick = () => { if (restT){ restT.end += 30000; restT.total += 30; restT.fired = false; tickRest(); pushRestSchedule(); } };
-  document.getElementById('rSkip').onclick = () => { restT = null; tickRest(); pushRestCancel(); };
+  document.getElementById('rPlus').onclick = () => { stopBeep(); if (restT){ restT.end += 30000; restT.total += 30; restT.fired = false; tickRest(); pushRestSchedule(); } };
+  document.getElementById('rSkip').onclick = () => { stopBeep(); restT = null; tickRest(); pushRestCancel(); };
 }
 
 function setView(v){
@@ -2896,12 +2896,15 @@ function primeBeep(){
     if (p && p.then) p.then(done).catch(() => {}); else done();
   }catch(e){}
 }
+function stopBeep(){
+  try{ if (beepEl){ beepEl.pause(); beepEl.currentTime = 0; beepEl.muted = false; } if (navigator.audioSession) navigator.audioSession.type = 'auto'; if (navigator.vibrate) navigator.vibrate(0); }catch(e){}
+}
 function alertRest(){
   try{ if (navigator.vibrate) navigator.vibrate([140,70,140]); }catch(e){}
   if (!settings.sound) return;
   try{
     if (beepEl){
-      try{ if (navigator.audioSession) navigator.audioSession.type = 'transient'; }catch(e){}
+      try{ if (navigator.audioSession) navigator.audioSession.type = 'playback'; }catch(e){}
       beepEl.muted = false; beepEl.volume = 1; beepEl.currentTime = 0;
       const p = beepEl.play();
       beepEl.onended = () => { try{ if (navigator.audioSession) navigator.audioSession.type = 'auto'; }catch(e){} };
@@ -4690,7 +4693,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v9</div>
+      <div class="notes" style="opacity:.6;">App version v10</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
