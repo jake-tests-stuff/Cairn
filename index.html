@@ -1238,7 +1238,7 @@ function wireDayInputs(){
       btn.classList.toggle('on', on);
       btn.innerHTML = on ? '&#10003;' : '';
       row.classList.remove('prefilled');
-      if (on) startRest(key);
+      if (on) startRest(key, idx); else cancelRestFor(key, idx);
       scheduleRowSave(row, key, idx, true);
     });
   });
@@ -2850,7 +2850,10 @@ function parseRestSec(s){
   return m[3].toLowerCase()==='min' ? a*60 : a;
 }
 function fmtClock(sec){ sec = Math.max(0, Math.ceil(sec)); return Math.floor(sec/60)+':'+pad(sec%60); }
-function startRest(key){
+function cancelRestFor(key, idx){
+  if (restT && restT.src === key + '#' + idx){ restT = null; tickRest(); pushRestCancel(); }
+}
+function startRest(key, idx){
   if (!settings.timer) return;
   const it = findItem(key);
   if (!it || isWarm(it.ex)) return;
@@ -2858,7 +2861,7 @@ function startRest(key){
   const sec = hop ? 15 : parseRestSec(it.rest);
   if (!sec) return;
   primeBeep();
-  restT = { end: Date.now()+sec*1000, total: sec, label: hop ? 'Superset: go to ' + ss.next : it.ex.replace(/\s*\((PRIMARY|secondary)\)/,''), fired:false };
+  restT = { end: Date.now()+sec*1000, total: sec, label: hop ? 'Superset: go to ' + ss.next : it.ex.replace(/\s*\((PRIMARY|secondary)\)/,''), fired:false, src: key + '#' + idx };
   if (!restInt) restInt = setInterval(tickRest, 250);
   tickRest();
   pushRestSchedule();
