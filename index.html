@@ -2833,8 +2833,9 @@ function plannedOn(ds){
 }
 function nextDeloadStart(from){
   const starts = [];
-  const seenWeeks = new Set();
-  WORKOUTS.forEach(w => { if (!w.synthetic && w.phase === 'Deload' && w.date >= from && !seenWeeks.has(w.week)){ seenWeeks.add(w.week); starts.push(w.date); } });
+  const firstOf = {};
+  WORKOUTS.forEach(w => { if (!w.synthetic && w.phase === 'Deload' && (!firstOf[w.week] || w.date < firstOf[w.week])) firstOf[w.week] = w.date; });
+  Object.values(firstOf).forEach(d => { if (d >= from) starts.push(d); });
   planRuns.filter(r => r.active !== false).forEach(r => { const first = {}; (r.sessions||[]).forEach(s => { if (s.week % 4 === 0 && !first[s.week]) first[s.week] = s.date; }); Object.values(first).forEach(d => { if (d >= from) starts.push(d); }); });
   if (deloadDoc && deloadDoc.active !== false && deloadDoc.from >= from) starts.push(deloadDoc.from);
   starts.sort(); return starts[0] || null;
@@ -4769,7 +4770,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v12</div>
+      <div class="notes" style="opacity:.6;">App version v13</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
