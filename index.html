@@ -2160,7 +2160,7 @@ function dateStrAgo(n){ const d=new Date(); d.setDate(d.getDate()-n); return d.g
 function offlineNote(){ return `<div class="offlineflag">Not connected. Entries here will not be saved.</div>`; }
 
 /* ---- settings (per-viewer, stored locally) ---- */
-let settings = { timer:true, sound:true, units:'imperial', theme:'system', accent:'amber', bar:45, plates:[45,35,25,10,5,2.5] };
+let settings = { timer:true, sound:true, loudAlarm:false, units:'imperial', theme:'system', accent:'amber', bar:45, plates:[45,35,25,10,5,2.5] };
 try{ const s = JSON.parse(localStorage.getItem('cairn_settings')||'null'); if (s) settings = Object.assign(settings, s); }catch(e){}
 const ACCENTS = {
   amber:{ n:'Amber' },
@@ -2919,8 +2919,36 @@ function beepSrc(){
   let s = ''; const u = new Uint8Array(buf); for (let i=0;i<u.length;i++) s += String.fromCharCode(u[i]);
   return 'data:audio/wav;base64,' + btoa(s);
 }
+/* Default alarm uses Web Audio: it mixes with music and never pauses it. The context is woken by the set tap and kept for the session.
+   "Play on silent" (settings.loudAlarm) switches back to an audio element, which plays on silent but pauses other apps' audio. */
+let rtCtx = null, rtNodes = [];
+function primeCtx(){
+  try{
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    if (!rtCtx){ try{ if (navigator.audioSession) navigator.audioSession.type = 'ambient'; }catch(e){} rtCtx = new AC(); }
+    if (rtCtx.state === 'suspended' && rtCtx.resume) rtCtx.resume();
+  }catch(e){}
+}
+function stopCtxAlarm(){ rtNodes.forEach(o => { try{ o.stop(); }catch(e){} }); rtNodes = []; }
+function playCtxAlarm(){
+  try{
+    primeCtx(); const c = rtCtx; if (!c) return false;
+    const go = () => {
+      const t0 = c.currentTime + 0.05;
+      for (let rep = 0; rep < 4; rep++) [[0, 0.16], [0.26, 0.16]].forEach(([off, len]) => {
+        const o = c.createOscillator(), g = c.createGain(), t = t0 + rep * 0.75 + off;
+        o.type = 'sine'; o.frequency.value = 880; o.connect(g); g.connect(c.destination);
+        g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+        o.start(t); o.stop(t + len + 0.02); rtNodes.push(o);
+      });
+    };
+    if (c.state === 'running') go(); else if (c.resume) c.resume().then(go).catch(() => alertRestWeb()); else go();
+    return true;
+  }catch(e){ return false; }
+}
 function primeBeep(){
   if (!settings.sound) return;
+  if (!settings.loudAlarm){ primeCtx(); return; }
   try{
     if (!beepEl){ beepEl = new Audio(beepSrc()); beepEl.preload = 'auto'; }
     try{ if (navigator.audioSession) navigator.audioSession.type = 'ambient'; }catch(e){}
@@ -2930,6 +2958,7 @@ function primeBeep(){
   }catch(e){}
 }
 function stopBeep(){
+  stopCtxAlarm();
   try{ if (beepEl){ beepEl.pause(); beepEl.currentTime = 0; beepEl.muted = false; } if (navigator.audioSession) navigator.audioSession.type = 'auto'; if (navigator.vibrate) navigator.vibrate(0); }catch(e){}
 }
 /* iOS can hold a beep that was requested while the app was in the background and play it at the next tap, so drop anything pending on return */
@@ -2939,6 +2968,7 @@ function alertRest(){
   if (document.visibilityState !== 'visible') return;
   try{ if (navigator.vibrate) navigator.vibrate([140,70,140]); }catch(e){}
   if (!settings.sound) return;
+  if (!settings.loudAlarm){ if (!playCtxAlarm()) alertRestWeb(); return; }
   try{
     if (beepEl){
       try{ if (navigator.audioSession) navigator.audioSession.type = 'playback'; }catch(e){}
@@ -4745,6 +4775,7 @@ function renderSettings(){
     <div class="card">
       <div class="setline"><div><div class="exname">Rest timer</div><div class="notes">Starts when you check off a set, using the rest time in the plan.</div></div><button class="switch ${settings.timer?'on':''}" id="swTimer" aria-label="Rest timer"></button></div>
       <div class="setline"><div><div class="exname">Sound and vibration</div><div class="notes">When the timer ends. iPhones may stay silent on silent mode.</div></div><button class="switch ${settings.sound?'on':''}" id="swSound" aria-label="Sound"></button></div>
+      <div class="setline"><div><div class="exname">Play on silent</div><div class="notes">Off: the alarm plays over your music and follows the silent switch. On: it plays even on silent, but your music pauses.</div></div><button class="switch ${settings.loudAlarm?'on':''}" id="swLoud" aria-label="Play on silent"></button></div>
       <button class="ghostbtn" id="swTest" style="align-self:flex-start;">Test the timer (5 sec)</button>
     </div>
     <div class="card" id="pushCard">
@@ -4786,7 +4817,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v15</div>
+      <div class="notes" style="opacity:.6;">App version v16</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
@@ -4817,6 +4848,7 @@ function renderSettings(){
     applyPlanRuns(); watchDayLogs(); watchDayEdit();
   });
   document.getElementById('swSound').onclick = (e) => { settings.sound = !settings.sound; saveSettings(); e.currentTarget.classList.toggle('on', settings.sound); };
+  document.getElementById('swLoud').onclick = (e) => { settings.loudAlarm = !settings.loudAlarm; saveSettings(); e.currentTarget.classList.toggle('on', settings.loudAlarm); };
   const showDisp = () => {
     const pr = document.createElement('div');
     pr.style.cssText = 'position:fixed;left:0;top:0;visibility:hidden;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
