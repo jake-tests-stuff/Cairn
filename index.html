@@ -2894,6 +2894,7 @@ function cancelRestFor(key, idx){
   if (restT && restT.src === key + '#' + idx){ restT = null; tickRest(); pushRestCancel(); }
 }
 function startRest(key, idx){
+  stopBeep();
   if (!settings.timer) return;
   const it = findItem(key);
   if (!it || isWarm(it.ex)) return;
@@ -2931,7 +2932,11 @@ function primeBeep(){
 function stopBeep(){
   try{ if (beepEl){ beepEl.pause(); beepEl.currentTime = 0; beepEl.muted = false; } if (navigator.audioSession) navigator.audioSession.type = 'auto'; if (navigator.vibrate) navigator.vibrate(0); }catch(e){}
 }
+/* iOS can hold a beep that was requested while the app was in the background and play it at the next tap, so drop anything pending on return */
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') stopBeep(); });
+window.addEventListener('pageshow', () => stopBeep());
 function alertRest(){
+  if (document.visibilityState !== 'visible') return;
   try{ if (navigator.vibrate) navigator.vibrate([140,70,140]); }catch(e){}
   if (!settings.sound) return;
   try{
@@ -2971,7 +2976,7 @@ function tickRest(){
   document.body.classList.add('restshown');
   document.getElementById('rLabel').textContent = restT.label;
   if (left<=0){
-    if (!restT.fired){ restT.fired = true; restT.doneAt = Date.now(); if (Date.now() - restT.end < 4000) alertRest(); if (document.visibilityState === 'visible') pushRestCancel(); }
+    if (!restT.fired){ restT.fired = true; restT.doneAt = Date.now(); if (document.visibilityState === 'visible' && Date.now() - restT.end < 4000) alertRest(); if (document.visibilityState === 'visible') pushRestCancel(); }
     bar.classList.add('go');
     document.getElementById('rTime').textContent = 'Go';
     document.getElementById('rFill').style.width = '100%';
@@ -4781,7 +4786,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v14</div>
+      <div class="notes" style="opacity:.6;">App version v15</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
