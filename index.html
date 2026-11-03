@@ -2929,11 +2929,15 @@ function primeCtx(){
     if (rtCtx.state === 'suspended' && rtCtx.resume) rtCtx.resume();
   }catch(e){}
 }
-function stopCtxAlarm(){ rtNodes.forEach(o => { try{ o.stop(); }catch(e){} }); rtNodes = []; }
+let rtBackT = null;
+function alarmSession(solo){ try{ if (navigator.audioSession) navigator.audioSession.type = solo ? 'transient-solo' : 'ambient'; }catch(e){} }
+function stopCtxAlarm(){ rtNodes.forEach(o => { try{ o.stop(); }catch(e){} }); rtNodes = []; clearTimeout(rtBackT); if (rtCtx) alarmSession(false); }
 function playCtxAlarm(){
   try{
     primeCtx(); const c = rtCtx; if (!c) return false;
     const go = () => {
+      /* during the alarm only, ask iOS to pause other audio; it goes back to mixing right after so music can resume */
+      alarmSession(true); clearTimeout(rtBackT); rtBackT = setTimeout(() => alarmSession(false), 3400);
       const t0 = c.currentTime + 0.05;
       for (let rep = 0; rep < 4; rep++) [[0, 0.16], [0.26, 0.16]].forEach(([off, len]) => {
         const o = c.createOscillator(), g = c.createGain(), t = t0 + rep * 0.75 + off;
@@ -4825,7 +4829,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v17</div>
+      <div class="notes" style="opacity:.6;">App version v18</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
