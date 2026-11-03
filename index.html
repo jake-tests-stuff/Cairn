@@ -2948,15 +2948,23 @@ function playCtxAlarm(){
 }
 function primeBeep(){
   if (!settings.sound) return;
-  if (!settings.loudAlarm){ primeCtx(); return; }
+  primeCtx();   /* checking a set never touches an audio element: that is what paused music */
+}
+/* "Play on silent" mode: the loud alarm needs an audio element that a tap has unlocked once. That unlock pauses music for a moment,
+   so it happens once per launch, on the first tap that is not a set check. */
+let beepUnlocked = false;
+function unlockBeep(){
+  if (beepUnlocked) return;
   try{
     if (!beepEl){ beepEl = new Audio(beepSrc()); beepEl.preload = 'auto'; }
-    try{ if (navigator.audioSession) navigator.audioSession.type = 'ambient'; }catch(e){}
     beepEl.muted = true; const p = beepEl.play();
-    const done = () => { try{ beepEl.pause(); beepEl.currentTime = 0; beepEl.muted = false; if (navigator.audioSession) navigator.audioSession.type = 'auto'; }catch(e){} };
+    const done = () => { try{ beepEl.pause(); beepEl.currentTime = 0; beepEl.muted = false; beepUnlocked = true; }catch(e){} };
     if (p && p.then) p.then(done).catch(() => {}); else done();
   }catch(e){}
 }
+document.addEventListener('pointerup', e => {
+  if (settings.sound && settings.loudAlarm && !beepUnlocked && !(e.target && e.target.closest && e.target.closest('.setrow, .donebtn, #restbar'))) unlockBeep();
+}, true);
 function stopBeep(){
   stopCtxAlarm();
   try{ if (beepEl){ beepEl.pause(); beepEl.currentTime = 0; beepEl.muted = false; } if (navigator.audioSession) navigator.audioSession.type = 'auto'; if (navigator.vibrate) navigator.vibrate(0); }catch(e){}
@@ -2970,16 +2978,16 @@ function alertRest(){
   if (!settings.sound) return;
   if (!settings.loudAlarm){ if (!playCtxAlarm()) alertRestWeb(); return; }
   try{
-    if (beepEl){
+    if (beepEl && beepUnlocked){
       try{ if (navigator.audioSession) navigator.audioSession.type = 'playback'; }catch(e){}
       beepEl.muted = false; beepEl.volume = 1; beepEl.currentTime = 0;
       const p = beepEl.play();
       beepEl.onended = () => { try{ if (navigator.audioSession) navigator.audioSession.type = 'auto'; }catch(e){} };
-      if (p && p.then){ p.catch(() => alertRestWeb()); }
+      if (p && p.then){ p.catch(() => { if (!playCtxAlarm()) alertRestWeb(); }); }
       return;
     }
   }catch(e){}
-  alertRestWeb();
+  if (!playCtxAlarm()) alertRestWeb();
 }
 function alertRestWeb(){
   try{
@@ -4775,7 +4783,7 @@ function renderSettings(){
     <div class="card">
       <div class="setline"><div><div class="exname">Rest timer</div><div class="notes">Starts when you check off a set, using the rest time in the plan.</div></div><button class="switch ${settings.timer?'on':''}" id="swTimer" aria-label="Rest timer"></button></div>
       <div class="setline"><div><div class="exname">Sound and vibration</div><div class="notes">When the timer ends. iPhones may stay silent on silent mode.</div></div><button class="switch ${settings.sound?'on':''}" id="swSound" aria-label="Sound"></button></div>
-      <div class="setline"><div><div class="exname">Play on silent</div><div class="notes">Off: the alarm plays over your music and follows the silent switch. On: it plays even on silent, but your music pauses.</div></div><button class="switch ${settings.loudAlarm?'on':''}" id="swLoud" aria-label="Play on silent"></button></div>
+      <div class="setline"><div><div class="exname">Play on silent</div><div class="notes">Off: the alarm plays over your music and follows the silent switch. On: it plays even on silent and pauses your music when the timer ends. Music also pauses once per app launch, on your first tap that is not a set.</div></div><button class="switch ${settings.loudAlarm?'on':''}" id="swLoud" aria-label="Play on silent"></button></div>
       <button class="ghostbtn" id="swTest" style="align-self:flex-start;">Test the timer (5 sec)</button>
     </div>
     <div class="card" id="pushCard">
@@ -4817,7 +4825,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v16</div>
+      <div class="notes" style="opacity:.6;">App version v17</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
