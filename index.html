@@ -3836,29 +3836,45 @@ function progressionSuggestions(){
     const done = log.sets.filter(s => s && s.done && Number(s.r) > 0);
     if (!done.length) return;
     const lift = it.lift, name = LIFT_LABEL[lift] || it.ex;
-    const tgtReps = Number(it.reps), tgtRpe = parseFloat(it.rpe);
-    const rpes = done.map(s => Number(s.rpe)).filter(x => isFinite(x) && x > 0);
+    const tgtReps = Number(it.reps), tgtRpe = parseFloat(it.rpe), tw = Number(it.tw) || 0;
+    // per-set read: every set counts, not just the average
+    const rows = done.map((st, i) => ({ n:i+1, w:Number(st.w) || 0, r:Number(st.r), rpe: isFinite(Number(st.rpe)) && Number(st.rpe) > 0 ? Number(st.rpe) : null, fail: st.t === 'fail' }));
+    const rpes = rows.map(x => x.rpe).filter(x => x != null);
     const avg = rpes.length ? rpes.reduce((a,b) => a+b, 0) / rpes.length : null;
-    const hit = done.length >= it.sets && (!isNaN(tgtReps) ? done.every(s => Number(s.r) >= tgtReps) : true);
+    const worst = rpes.length ? Math.max.apply(null, rpes) : null;
+    const missed = rows.filter(x => x.fail || (!isNaN(tgtReps) && x.r < tgtReps));
+    const short = done.length < it.sets;
+    const light = tw ? rows.filter(x => x.w && x.w < tw - 2.5) : [];
+    const heavy = tw ? rows.filter(x => x.w > tw + 2.5) : [];
+    const detail = rows.map(x => `Set ${x.n}: ${x.w ? x.w + ' x ' : ''}${x.r}${x.rpe != null ? ' @ ' + x.rpe : ''}`).join(' · ');
     let dismissed = false; try{ dismissed = !!localStorage.getItem(progKey(w.date, lift)); }catch(e){}
     if (dismissed) return;
     const cur = maxes[lift];
     let s = null;
-    if (!hit){
-      s = { kind:'hold', text:`${name}: not all prescribed reps were hit. Repeat this weight before adding anything.` };
+    if (missed.length || short){
+      const bits = missed.map(x => `set ${x.n} ${x.fail ? 'was a fail' : 'got ' + x.r + ' of ' + tgtReps}`);
+      s = { kind:'hold', text:`${name}: ${bits.length ? bits.join(', ') : 'not all sets were done'}. Repeat this weight before adding anything.` };
     } else if (avg == null || isNaN(tgtRpe)){
       s = { kind:'info', text:`${name}: every rep was hit. Log RPE on the main sets and I can say whether to move up.` };
     } else {
-      const d = avg - tgtRpe;
+      const d = avg - tgtRpe, dw = worst - tgtRpe;
+      const first = rows.find(x => x.rpe != null), last = rows.slice().reverse().find(x => x.rpe != null);
+      const drift = (first && last && first !== last) ? last.rpe - first.rpe : 0;
       const inDeload = w.phase === 'Deload' || deloadOn(w.date);
-      if (d <= -0.5 && cur && !inDeload){
-        const inc = d <= -1.5 ? (lift==='bench' ? 5 : 10) : 5;
+      if (light.length){
+        s = { kind:'ok', text:`${name}: ${light.length === rows.length ? 'every set' : 'set ' + light.map(x => x.n).join(', ')} was under the planned ${tw} lb, so this doesn't count as a clean read. Aim for ${tw} lb next time and the max stays where it is.` };
+      } else if (dw >= 1 || (drift >= 1.5 && last.rpe > tgtRpe)){
+        const hard = rows.filter(x => x.rpe != null && x.rpe - tgtRpe >= 1).map(x => x.n);
+        s = { kind:'down', text:`${name}: ${drift >= 1.5 ? `RPE climbed from ${first.rpe} to ${last.rpe} across the sets, against a target of ${tgtRpe}. ` : `set ${hard.join(', ')} ran hot against a target of ${tgtRpe}. `}Hold your max, and think about taking a set or 5% off next session.` };
+      } else if (dw <= -0.5 && cur && !inDeload && !heavy.length){
+        // every set came in easier than planned, so the weakest set still clears the bar
+        const inc = dw <= -1.5 ? (lift==='bench' ? 5 : 10) : 5;
         const nm = Math.min(cur + inc, Math.floor(cur * 1.03 / 5) * 5);
-        if (nm > cur) s = { kind:'up', lift, newMax:nm, text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. That's easier than planned. You could nudge your ${name.toLowerCase()} max from ${cur} to ${nm}.` };
+        if (nm > cur) s = { kind:'up', lift, newMax:nm, text:`${name}: every set came in easier than the RPE ${tgtRpe} target (hardest was ${worst}). You could nudge your ${name.toLowerCase()} max from ${cur} to ${nm}.` };
       }
-      if (!s && d >= 1) s = { kind:'down', text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. Harder than planned. Hold your max, and think about taking a set or 5% off next session.` };
-      if (!s) s = { kind:'ok', text:`${name}: RPE ${avg.toFixed(1)} against a target of ${tgtRpe}. Right on plan. Take the planned weight next session. The max stays where it is.` };
+      if (!s) s = { kind:'ok', text:`${name}: RPE ${avg.toFixed(1)} on average against a target of ${tgtRpe}${worst - (avg) >= 0.75 ? `, with the hardest set at ${worst}` : ''}. ${avg - tgtRpe <= -0.5 ? 'Some sets were easier but not all, so ' : ''}Take the planned weight next session. The max stays where it is.` };
     }
+    s.detail = detail;
     s.lift = lift; s.date = w.date; out.push(s);
   });
   return out;
@@ -3867,7 +3883,7 @@ function progressionHtml(){
   const list = progressionSuggestions();
   if (!list.length) return '';
   return `<div><div class="jlabel">Next time</div><div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">${list.map(s => `
-    <div class="card" style="padding:10px 12px;gap:6px;"><div class="notes" style="color:var(--fg);">${esc(s.text)}</div>
+    <div class="card" style="padding:10px 12px;gap:6px;"><div class="notes" style="color:var(--fg);">${esc(s.text)}</div>${s.detail ? `<div class="notes tabular">${esc(s.detail)}</div>` : ''}
     <div class="rbtns">${s.kind==='up' ? `<button class="ghostbtn" data-progapply="${s.lift}|${s.newMax}">Apply ${s.newMax}</button>` : ''}<button class="ghostbtn" data-progdismiss="${s.lift}">Dismiss</button></div></div>`).join('')}</div></div>`;
 }
 function wireProgression(){
@@ -4831,7 +4847,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v23</div>
+      <div class="notes" style="opacity:.6;">App version v24</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
