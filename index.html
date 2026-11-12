@@ -162,6 +162,7 @@ main{ flex:1; padding-block:14px 90px; display:flex; flex-direction:column; gap:
 }
 .cardiorow input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
 .cardiorow.prefilled input{ color:var(--accent); border-style:dashed; }
+.swrow.on{ border-color:var(--accent); background:color-mix(in srgb,var(--accent) 14%, var(--surface2)); }
 .donebtn{
   width:32px; height:32px; border-radius:50%; border:1px solid var(--line); background:var(--surface2);
   color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:15px; flex:0 0 auto;
@@ -2440,12 +2441,22 @@ function openSwapSheet(key){
   const it = findItem(key); if (!it) return;
   const base = it.ex.replace(/\s*\(.*\)/,'');
   const mine = new Set((musclesFor(it) || []).slice(0, 2));
-  let q = '', all = false;
+  let q = '', all = false, sel = null; // sel: the exercise tapped but not yet swapped in
+  const selKey = (e) => e ? e.n.toLowerCase() : '';
+  const mark = () => {
+    document.querySelectorAll('#swList .swrow').forEach(b => { const on = !!sel && ((b.dataset.own && sel.own && sel.n.toLowerCase() === q.trim().toLowerCase()) || (!b.dataset.own && b.dataset.nm === selKey(sel))); b.classList.toggle('on', on); });
+    const go = document.getElementById('swGo'); if (go){ go.disabled = !sel; go.textContent = sel ? 'Swap in ' + sel.n : 'Tap an exercise to pick it'; }
+  };
   const draw = () => {
     const ql = q.trim().toLowerCase();
     const list = allExercises().filter(e => e.n.toLowerCase() !== base.toLowerCase() && !/stretch|foam roll|mobility/i.test(e.n) && (!ql || e.n.toLowerCase().includes(ql)) && (all || ql || !mine.size || e.p.some(m => mine.has(m)))).slice(0, 40);
-    document.getElementById('swList').innerHTML = list.map((e, i) => `<button class="ghostbtn swrow" data-i="${i}" style="text-align:left;">${esc(e.n)} <span class="notes">${esc(e.p.join(', '))}</span></button>`).join('') + (ql ? `<button class="ghostbtn swrow" data-own="1" style="text-align:left;">Use "${esc(q.trim())}"</button>` : '') || '<div class="notes">No match. Type a name to use it.</div>';
-    document.querySelectorAll('#swList .swrow').forEach(b => b.onclick = () => pick(b.dataset.own ? { n:q.trim(), p:[...mine] } : list[Number(b.dataset.i)]));
+    document.getElementById('swList').innerHTML = list.map((e, i) => `<button class="ghostbtn swrow" data-i="${i}" data-nm="${esc(e.n.toLowerCase())}" style="text-align:left;">${esc(e.n)} <span class="notes">${esc(e.p.join(', '))}</span></button>`).join('') + (ql ? `<button class="ghostbtn swrow" data-own="1" style="text-align:left;">Use "${esc(q.trim())}"</button>` : '') || '<div class="notes">No match. Type a name to use it.</div>';
+    document.querySelectorAll('#swList .swrow').forEach(b => b.onclick = () => {
+      const e = b.dataset.own ? { n:q.trim(), p:[...mine], own:true } : list[Number(b.dataset.i)];
+      sel = (sel && selKey(sel) === selKey(e)) ? null : e; // tapping the picked one again unpicks it
+      mark();
+    });
+    mark();
   };
   const pick = async (e) => {
     const hid = (dayEdit.hidden||[]).slice(), hideKey = k => { if (hid.indexOf(k)<0) hid.push(k); };
@@ -2457,11 +2468,13 @@ function openSwapSheet(key){
   };
   openSheet(`<div><div class="brand">SWAP FOR TODAY</div><h2 style="font-size:22px;">${esc(base)}</h2><div class="notes">Replaces it for today only. Your program is unchanged.</div></div>
     <input id="swQ" type="text" placeholder="Search or type your own" autocomplete="off" style="width:100%;">
+    <button class="savebtn" id="swGo" disabled>Tap an exercise to pick it</button>
     <div class="addbtnrow"><button class="ghostbtn" id="swAll">Show all muscles</button><button class="ghostbtn" id="swClose">Cancel</button></div>
     <div id="swList" style="display:flex;flex-direction:column;gap:8px;"></div>`);
   document.getElementById('swQ').oninput = ev => { q = ev.target.value; draw(); };
   document.getElementById('swAll').onclick = () => { all = !all; document.getElementById('swAll').textContent = all ? 'Same muscles only' : 'Show all muscles'; draw(); };
   document.getElementById('swClose').onclick = closeSheet;
+  document.getElementById('swGo').onclick = () => { if (sel) pick(sel); };
   draw();
 }
 
@@ -4862,7 +4875,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v26</div>
+      <div class="notes" style="opacity:.6;">App version v27</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
