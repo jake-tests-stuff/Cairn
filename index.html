@@ -2679,6 +2679,73 @@ function computeRecap(){
   });
   return { muscles, sets, vol: Math.round(vol), top, extras };
 }
+/* ---- performance review in the recap: every exercise, not just the plan's lifts ---- */
+function doneSetsOf(log){ return ((log && log.sets) || []).filter(s => s && s.done && Number(s.r) > 0); }
+function setLoad(sets){ // weight x reps when there is weight, otherwise just reps
+  let vol = 0, reps = 0, top = 0;
+  sets.forEach(s => { const w = Number(s.w) || 0, r = Number(s.r) || 0; reps += r; if (w > 0){ vol += w * r; top = Math.max(top, e1rm(w, Math.min(r, 12))); } });
+  return { vol, reps, top, weighted: vol > 0 };
+}
+function performanceReview(r){
+  const { all } = dayItems();
+  const rows = []; let up = 0, same = 0, down = 0, firsts = 0, volNow = 0, volPrev = 0;
+  all.forEach(it => {
+    if (it.hidden || it.sets == null || isWarm(it.ex)) return;
+    const done = doneSetsOf(logDoc[it.k]); if (!done.length) return;
+    const now = setLoad(done);
+    const pr = priorPerf[it.ex] ? priorPerf[it.ex].filter(s => s && (Number(s.w) > 0 || Number(s.r) > 0) && s.done !== false) : [];
+    const prev = pr.length ? setLoad(pr) : null;
+    let cmp = null; // fractional change versus last time, using the better of volume or estimated max
+    if (prev){
+      const a = now.weighted && prev.weighted ? now.vol : now.reps, b = now.weighted && prev.weighted ? prev.vol : prev.reps;
+      const t = now.weighted && prev.weighted && prev.top ? now.top / prev.top - 1 : null;
+      const v = b ? a / b - 1 : null;
+      cmp = (v == null && t == null) ? null : (t != null && Math.abs(t) > Math.abs(v || 0) && Math.abs(t) >= 0.02 ? t : (v ?? t));
+      if (now.weighted && prev.weighted){ volNow += now.vol; volPrev += prev.vol; }
+    } else firsts++;
+    if (cmp != null){ if (cmp >= 0.02) up++; else if (cmp <= -0.05) down++; else same++; }
+    const planDriven = !!(it.lift && (it.tw != null || it.pct != null));
+    const tgtReps = Number(it.reps), tgtRpe = parseFloat(it.rpe);
+    let tip = '', kind = 'ok';
+    if (planDriven){
+      const miss = done.filter(s => !isNaN(tgtReps) && Number(s.r) < tgtReps).length;
+      const rp = done.map(s => Number(s.rpe)).filter(x => x > 0), avg = rp.length ? rp.reduce((a, b) => a + b, 0) / rp.length : null;
+      if (miss || done.length < it.sets){ tip = 'Some reps or sets fell short of the plan. Keep the planned weight next time.'; kind = 'hold'; }
+      else if (avg != null && !isNaN(tgtRpe) && avg <= tgtRpe - 0.5){ tip = 'Hit every rep and it moved easier than planned. Good sign for the next block.'; kind = 'up'; }
+      else if (avg != null && !isNaN(tgtRpe) && avg >= tgtRpe + 1){ tip = 'Hit the reps but it ran harder than planned. Hold the weight.'; kind = 'hold'; }
+      else tip = 'Right on plan. Take the planned weight next time.';
+    } else {
+      const sg = suggestNext(it, done, priorPerf[it.ex]);
+      if (sg){
+        kind = sg.kind;
+        tip = sg.kind === 'up' ? `Up it next time: ${sg.w} lb${sg.reps ? ' x ' + sg.reps : ''}.` + (sg.addSet ? ' An extra set is also fine.' : '')
+          : sg.kind === 'reps' ? `Same ${sg.w} lb. Go for ${sg.reps} reps on each set.`
+          : sg.kind === 'hold' ? `That felt hard. Hold ${sg.w} lb and keep the reps clean.`
+          : sg.kind === 'repeat' ? `Some sets came up short. Same weight again.`
+          : `Solid work. Repeat it and add weight once it feels easier.`;
+      } else tip = now.weighted ? 'Logged. Add a rep range or RPE and I can say when to move up.' : 'Logged.';
+    }
+    const cmpTxt = cmp == null ? (prev ? '' : 'First time logged') : (cmp >= 0.02 ? '&#9650; ' + Math.round(cmp * 100) + '% vs last time' : cmp <= -0.05 ? '&#9660; ' + Math.round(-cmp * 100) + '% vs last time' : 'Even with last time');
+    rows.push({ name: it.ex.replace(/\s*\(.*?\)/, ''), kind, cmpTxt, tip, sets: done.length });
+  });
+  if (!rows.length) return '';
+  // muscle coverage: what got real work and what only got a taste
+  const ms = Object.entries(r.muscles).sort((a, b) => b[1] - a[1]);
+  const well = ms.filter(([, n]) => n >= 6).map(([m]) => m), solid = ms.filter(([, n]) => n >= 3 && n < 6).map(([m]) => m), light = ms.filter(([, n]) => n < 3).map(([m, n]) => m + ' (' + n + ')');
+  const mTxt = [well.length ? 'Well covered: ' + well.join(', ') + '.' : '', solid.length ? 'Solid: ' + solid.join(', ') + '.' : '', light.length ? 'Only a little: ' + light.join(', ') + '. Add a set or two if you want more there.' : ''].filter(Boolean).join(' ');
+  const cmpN = up + same + down;
+  let head;
+  if (!cmpN) head = firsts ? 'First time logging these, so this session is your new baseline. Beat it next time.' : 'Session logged.';
+  else if (up >= Math.ceil(cmpN / 2) && down === 0) head = `Strong session. ${up} of ${cmpN} exercises beat last time${same ? ' and ' + same + ' matched it' : ''}.`;
+  else if (down > up) head = `Lighter day than last time: ${down} of ${cmpN} exercises came in below it. One off day is fine. Check sleep, food and stress if it keeps up.`;
+  else head = `Steady session. ${up} up, ${same} matched, ${down} down compared with last time.`;
+  if (volPrev > 0 && cmpN){ const d = Math.round((volNow / volPrev - 1) * 100); if (Math.abs(d) >= 2) head += ` Weighted volume ${d > 0 ? 'up' : 'down'} ${Math.abs(d)}%.`; }
+  const chipCls = { up:'rec', reps:'rec' };
+  return `<div><div class="jlabel">How it went</div>
+    <div class="card" style="padding:10px 12px;gap:6px;margin-top:6px;"><div class="notes" style="color:var(--fg);">${esc(head)}</div>${mTxt ? `<div class="notes">${esc(mTxt)}</div>` : ''}</div>
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">${rows.map(x => `<div class="card" style="padding:10px 12px;gap:4px;"><div class="exhead"><div class="exname" style="font-size:15px;">${esc(x.name)}</div><span class="notes tabular" style="flex:none;">${x.sets} ${x.sets === 1 ? 'set' : 'sets'}${x.cmpTxt ? ' · ' + x.cmpTxt : ''}</span></div><div class="notes" style="color:var(--fg);">${esc(x.tip)}</div></div>`).join('')}</div></div>`;
+}
+
 function openRecap(){
   const r = computeRecap();
   const w = WORKOUTS[curIdx];
@@ -2697,6 +2764,7 @@ function openRecap(){
       </div>
       <div><div class="jlabel">Muscles worked</div>${muscleMapSvg(r.muscles)}<div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">${bars}</div></div>
     ` : `<div class="notes">No working sets are checked off yet. Tap the check on each set as you finish it and the recap fills in.</div>`}
+    ${r.sets ? performanceReview(r) : ''}
     ${progressionHtml()}
     ${r.extras.length ? `<div><div class="jlabel">Also done</div><div class="chips" style="margin-top:6px;">${r.extras.map(x => `<span class="chip">${esc(x)}</span>`).join('')}</div></div>` : ''}
     <div class="addbtnrow">
@@ -4952,7 +5020,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v28</div>
+      <div class="notes" style="opacity:.6;">App version v29</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
