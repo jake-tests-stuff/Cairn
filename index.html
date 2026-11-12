@@ -785,27 +785,32 @@ function watchDayLogs(){
 
 /* pull the most recent PRIOR session's numbers for each exercise on this day, so an
    unfilled set can start from what was actually done last time instead of a blank field */
-async function loadPriorPerf(){
-  priorPerf = {}; priorPerf2 = {};
-  if (offline || !db) { renderDay(); return; }
-  const w = WORKOUTS[curIdx];
-  const names = Array.from(new Set(w.items.filter(it => it.sets != null).map(it => it.ex)));
+let priorTried = new Set(), priorTok = 0;
+async function loadPriorPerf(keep){
+  if (!keep){ priorPerf = {}; priorPerf2 = {}; priorTried = new Set(); priorTok++; }
+  if (offline || !db) { if (!keep) renderDay(); return; }
+  const tok = priorTok, w = WORKOUTS[curIdx];
+  // every exercise on the day counts: plan items AND anything added or swapped in
+  const names = Array.from(new Set(dayItems().all.filter(it => it.sets != null).map(it => it.ex))).filter(ex => !priorTried.has(ex));
+  names.forEach(ex => priorTried.add(ex));
   await Promise.all(names.map(async (ex) => {
     try{
       const docs = [];
       for (const nm of [ex].concat(EX_ALIAS[ex] || [])){
         const snap = await db.collection('logs')
           .where('exercise','==',nm).where('date','<',w.date)
-          .orderBy('date','desc').limit(2).get();
+          .orderBy('date','desc').limit(8).get();
         snap.docs.forEach(d => docs.push(d.data()));
       }
       docs.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
-      const have = docs.filter(d => d && d.sets);
+      // skip empty shells: only sessions where a set actually has weight or reps
+      const have = docs.filter(d => d && d.sets && d.sets.some(x => x && (Number(x.w) > 0 || Number(x.r) > 0)));
       if (have[0]) priorPerf[ex] = have[0].sets;
       if (have[1]) priorPerf2[ex] = have[1].sets;
     }catch(e){ /* leave unfilled if the lookup fails */ }
   }));
-  renderDay();
+  if (tok !== priorTok) return; // the day changed while we were looking
+  if (!keep || names.length) renderDay();
 }
 
 function watchDayEdit(){
@@ -817,6 +822,7 @@ function watchDayEdit(){
   unsubDayEdit = db.doc('dayEdits/'+date).onSnapshot(snap => {
     dayEdit = snap.exists ? { hidden: snap.data().hidden||[], custom: snap.data().custom||[], setAdj: snap.data().setAdj||{}, links: snap.data().links||[] } : { hidden: [], custom: [], setAdj: {}, links: [] };
     renderDay();
+    loadPriorPerf(true);
   }, err => { console.warn('dayEdit sub error', err); });
 }
 
@@ -4847,7 +4853,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v24</div>
+      <div class="notes" style="opacity:.6;">App version v25</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
