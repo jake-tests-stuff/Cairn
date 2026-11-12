@@ -2686,6 +2686,26 @@ function setLoad(sets){ // weight x reps when there is weight, otherwise just re
   sets.forEach(s => { const w = Number(s.w) || 0, r = Number(s.r) || 0; reps += r; if (w > 0){ vol += w * r; top = Math.max(top, e1rm(w, Math.min(r, 12))); } });
   return { vol, reps, top, weighted: vol > 0 };
 }
+function trendTip(done, pr, it){
+  // no RPE needed: read weight and reps against last time and say what to do next
+  const wts = done.map(s => Number(s.w) || 0), rps = done.map(s => Number(s.r) || 0);
+  const w = Math.max.apply(null, wts), avgR = rps.reduce((a, b) => a + b, 0) / rps.length;
+  const rr = parseRepRange(it.reps), top = rr ? rr.hi : null;
+  const p = pr && pr.length ? { w: Math.max.apply(null, pr.map(s => Number(s.w) || 0)), r: pr.reduce((a, s) => a + (Number(s.r) || 0), 0) / pr.length } : null;
+  const nextR = Math.round(avgR) + 1;
+  if (w <= 0){ // bodyweight or no weight logged
+    if (!p) return `${Math.round(avgR)} reps per set is your baseline. Aim for ${nextR} on each set next time.`;
+    return avgR > p.r + 0.4 ? `More reps than last time (${Math.round(p.r)} to ${Math.round(avgR)} per set). Keep adding reps, and add load once it gets easy.` : avgR < p.r - 0.4 ? `Fewer reps than last time. Chase ${Math.round(p.r)} per set again.` : `Matched last time. Aim for ${nextR} per set.`;
+  }
+  const inc = progInc(it.ex, w);
+  if (!p) return top && avgR >= top ? `Baseline set at ${w} lb, and you are at the top of the range. Add ${inc} lb next time.` : `Baseline at ${w} lb for ${Math.round(avgR)} reps. Next time aim for ${top ? Math.min(top, nextR) : nextR} reps on each set, then add weight.`;
+  if (w > p.w + 0.5) return avgR >= p.r - 1 ? `Heavier than last time (${p.w} to ${w} lb) and the reps held. Keep ${w} lb until the reps climb, then add more.` : `Heavier than last time (${p.w} to ${w} lb) but the reps dropped. Stay at ${w} lb and build the reps back up.`;
+  if (w < p.w - 0.5) return `Lighter than last time (${p.w} to ${w} lb). Go back to ${p.w} lb next time if it felt fine.`;
+  if (top && avgR >= top) return `You hit the top of the range at ${w} lb. Add ${inc} lb next time and start back near the low end.`;
+  if (avgR > p.r + 0.4) return `More reps at the same ${w} lb (${Math.round(p.r)} to ${Math.round(avgR)} per set). Keep climbing${top ? ' to ' + top : ''}, then add weight.`;
+  if (avgR < p.r - 0.4) return `Fewer reps than last time at ${w} lb. Same weight again and chase ${Math.round(p.r)} per set.`;
+  return `Matched last time at ${w} lb. Aim for ${top ? Math.min(top, nextR) : nextR} reps on each set next time.`;
+}
 function performanceReview(r){
   const { all } = dayItems();
   const rows = []; let up = 0, same = 0, down = 0, firsts = 0, volNow = 0, volPrev = 0;
@@ -2716,14 +2736,13 @@ function performanceReview(r){
       else tip = 'Right on plan. Take the planned weight next time.';
     } else {
       const sg = suggestNext(it, done, priorPerf[it.ex]);
-      if (sg){
+      if (sg && sg.kind !== 'ok'){
         kind = sg.kind;
         tip = sg.kind === 'up' ? `Up it next time: ${sg.w} lb${sg.reps ? ' x ' + sg.reps : ''}.` + (sg.addSet ? ' An extra set is also fine.' : '')
           : sg.kind === 'reps' ? `Same ${sg.w} lb. Go for ${sg.reps} reps on each set.`
           : sg.kind === 'hold' ? `That felt hard. Hold ${sg.w} lb and keep the reps clean.`
-          : sg.kind === 'repeat' ? `Some sets came up short. Same weight again.`
-          : `Solid work. Repeat it and add weight once it feels easier.`;
-      } else tip = now.weighted ? 'Logged. Add a rep range or RPE and I can say when to move up.' : 'Logged.';
+          : `Some sets came up short. Same weight again.`;
+      } else tip = trendTip(done, pr, it); // no RPE needed
     }
     const cmpTxt = cmp == null ? (prev ? '' : 'First time logged') : (cmp >= 0.02 ? '&#9650; ' + Math.round(cmp * 100) + '% vs last time' : cmp <= -0.05 ? '&#9660; ' + Math.round(-cmp * 100) + '% vs last time' : 'Even with last time');
     rows.push({ name: it.ex.replace(/\s*\(.*?\)/, ''), kind, cmpTxt, tip, sets: done.length });
@@ -5020,7 +5039,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v29</div>
+      <div class="notes" style="opacity:.6;">App version v30</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
