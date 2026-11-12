@@ -162,6 +162,14 @@ main{ flex:1; padding-block:14px 90px; display:flex; flex-direction:column; gap:
 }
 .cardiorow input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
 .cardiorow.prefilled input{ color:var(--accent); border-style:dashed; }
+.xpmus{ flex:none; min-height:48px; align-items:center; display:flex; gap:6px; overflow-x:auto; padding:10px 0; -webkit-overflow-scrolling:touch; } .xpmus .mpick{ flex:none; white-space:nowrap; }
+.xplist{ border-top:1.5px solid var(--fg); }
+.xprow{ width:100%; display:grid; grid-template-columns:1fr auto; gap:2px 10px; text-align:left; background:transparent; border:0; border-bottom:1px solid var(--line); padding:11px 2px; color:var(--fg); font:inherit; }
+.xpn{ font-weight:700; font-size:15px; } .xpn i{ font-style:normal; font-size:11px; color:var(--accent); margin-left:4px; }
+.xpm{ grid-column:1; font-size:12.5px; color:var(--muted); } .xpa{ grid-row:1 / span 2; grid-column:2; align-self:center; font-size:22px; color:var(--accent); width:30px; text-align:center; }
+.xprow.on{ background:color-mix(in srgb,var(--accent) 10%,transparent); }
+.xpmake{ margin-top:14px; } .xpmake .lab{ font-size:11px; letter-spacing:.06em; color:var(--faint); margin-bottom:6px; }
+.xpin{ width:100%; background:var(--surface2); border:none; border-radius:12px; padding:10px 14px; min-height:44px; color:var(--fg); font-size:16px; }
 .swrow.on{ border-color:var(--accent); background:color-mix(in srgb,var(--accent) 14%, var(--surface2)); }
 .donebtn{
   width:32px; height:32px; border-radius:50%; border:1px solid var(--line); background:var(--surface2);
@@ -1145,6 +1153,75 @@ function renderDay(){
   if (editMode) wireEditControls();
 }
 
+/* ===== Add exercise: pick from the library, see what it hits, or make your own ===== */
+function openExercisePicker(onAdd, onDone, onRemove){
+  let q = '', mus = '', mk = false, picked = new Set(), made = new Set(), addedId = {};
+  const dropOne = async (name) => { // tapped again: take it back out
+    if (onRemove){ onRemove(name); return; }
+    const id = addedId[name]; delete addedId[name]; if (id) await removeCustomEx(id);
+  };
+  const addOne = onAdd ? async (name, muscles) => { onAdd(name, muscles || []); rememberExercise(name, muscles || []); } : async (name, muscles) => {
+    const id = 'c' + Date.now() + Math.floor(Math.random() * 99);
+    addedId[name] = id;
+    dayEdit.custom = (dayEdit.custom || []).concat([{ id, ex: name, sets: 3, reps: null, tw: null, muscles: muscles || [] }]);
+    rememberExercise(name, muscles || []);
+    await saveDayEdit(); renderDay();
+  };
+  const list = () => {
+    const ql = q.trim().toLowerCase();
+    let all = allExercises().filter(e => (!mus || e.p.concat(e.s).includes(mus)) && (!ql || e.n.toLowerCase().includes(ql)));
+    all.sort((a, b) => (b.mine ? 1 : 0) - (a.mine ? 1 : 0) || a.n.localeCompare(b.n));
+    return all.slice(0, 60);
+  };
+  const rowHtml = (e) => `<button type="button" class="xprow ${picked.has(e.n) ? 'on' : ''}" data-xn="${esc(e.n)}"><span class="xpn">${esc(e.n)}${e.mine ? ' <i>yours</i>' : ''}</span><span class="xpm">${esc(e.p.concat(e.s).slice(0, 4).join(' · ') || 'No muscles set')}</span><span class="xpa">${picked.has(e.n) ? '&#10003;' : '+'}</span></button>`;
+  /* Only the list redraws while you type or filter. The search box, the sheet and your scroll spot stay put. */
+  const paintList = () => {
+    const el = document.querySelector('.xplist'); if (!el) return;
+    const rows = list();
+    el.innerHTML = rows.length ? rows.map(rowHtml).join('') : '<div class="notes" style="padding:12px 0;">No match. Make your own below.</div>';
+    el.querySelectorAll('[data-xn]').forEach(b => b.onclick = async () => {
+      const name = b.dataset.xn, e = libLookup(name); const a = b.querySelector('.xpa');
+      if (picked.has(name)){ // tap a picked exercise again to unpick it
+        picked.delete(name); b.classList.remove('on'); if (a) a.innerHTML = '+';
+        await dropOne(name); return;
+      }
+      picked.add(name); b.classList.add('on'); if (a) a.innerHTML = '&#10003;';
+      await addOne(name, e ? e.p.concat(e.s) : []);
+    });
+  };
+  const paint = () => {
+    openSheet(`<div class="plhead"><h2 style="font-size:26px;">Add exercise</h2><button class="savebtn" id="xpDone" style="flex:none;padding:8px 16px;min-height:0;">Done</button></div>
+      <input id="xpQ" class="xpin" type="search" placeholder="Search exercises" value="${esc(q)}" autocomplete="off">
+      <div class="xpmus">${['All', ...MUSCLE_TAGS].map(m => `<button type="button" class="mpick ${(m === 'All' ? !mus : mus === m) ? 'on' : ''}" data-xm="${m}">${m}</button>`).join('')}</div>
+      <div class="xplist"></div>
+      <div class="xpmake"><div class="lab">CAN'T FIND IT?</div>
+        ${mk ? `<input id="xpName" class="xpin" type="text" placeholder="Exercise name" value="${esc(q)}" maxlength="60"><div class="muscpick" id="xpMus" style="margin-top:8px;">${MUSCLE_TAGS.map(m => `<button type="button" class="mpick ${made.has(m) ? 'on' : ''}" data-mm="${m}">${m}</button>`).join('')}</div>
+        <div class="rbtns" style="margin-top:10px;"><button class="savebtn" id="xpMk">Add my exercise</button><button class="ghostbtn" id="xpMkX">Cancel</button></div>` : '<button class="ghostbtn" id="xpNew">+ Make my own exercise</button>'}</div>`);
+    paintList();
+    const qi = document.getElementById('xpQ');
+    document.getElementById('xpDone').onclick = () => { if (onDone) onDone(); else closeSheet(); };
+    let qt = null;
+    qi.oninput = (e) => { q = e.target.value; clearTimeout(qt); qt = setTimeout(paintList, 60); };
+    document.querySelectorAll('[data-xm]').forEach(b => b.onclick = () => { mus = b.dataset.xm === 'All' ? '' : b.dataset.xm; document.querySelectorAll('[data-xm]').forEach(x => x.classList.toggle('on', x === b)); paintList(); });
+    const nw = document.getElementById('xpNew'); if (nw) nw.onclick = () => { mk = true; paint(); };
+    const mx = document.getElementById('xpMkX'); if (mx) mx.onclick = () => { mk = false; made.clear(); paint(); };
+    document.querySelectorAll('[data-mm]').forEach(b => b.onclick = () => { const m = b.dataset.mm; made.has(m) ? made.delete(m) : made.add(m); b.classList.toggle('on'); });
+    const mm = document.getElementById('xpMk'); if (mm) mm.onclick = async () => {
+      const n = document.getElementById('xpName').value.trim(); if (!n) return;
+      picked.add(n); await addOne(n, Array.from(made)); mk = false; made.clear(); q = ''; paint();
+    };
+  };
+  paint();
+}
+
+async function removeCustomEx(id){
+  dayEdit.custom = (dayEdit.custom || []).filter(c => c.id !== id);
+  await saveDayEdit();
+  const w = WORKOUTS[curIdx];
+  try{ await db.collection('logs').doc(w.date + '__custom-' + id).delete(); }catch(e){}
+  renderDay();
+}
+
 function addFormHtml(){
   return `
     <div class="card addcard">
@@ -1173,7 +1250,7 @@ function addFormHtml(){
 
 function wireAddForm(){
   const openBtn = document.getElementById('openAdd');
-  if (openBtn) openBtn.onclick = () => { showAddForm = true; renderDay(); };
+  if (openBtn) openBtn.onclick = () => openExercisePicker();
   const ot = document.getElementById('openTpl'); if (ot) ot.onclick = openTemplatePicker;
   const st = document.getElementById('saveTpl'); if (st) st.onclick = openSaveTemplate;
   const cancelBtn = document.getElementById('cancelAdd');
@@ -1248,7 +1325,7 @@ function wireEditControls(){
     btn.onclick = () => adjustSetCount(btn.dataset.setplus, 1);
   });
   const openBtn = document.getElementById('openAdd');
-  if (openBtn) openBtn.onclick = () => { showAddForm = true; renderDay(); };
+  if (openBtn) openBtn.onclick = () => openExercisePicker();
   const ot2 = document.getElementById('openTpl'); if (ot2) ot2.onclick = openTemplatePicker;
   const st2 = document.getElementById('saveTpl'); if (st2) st2.onclick = openSaveTemplate;
   wireAddForm(); // the add form's Add / Cancel / muscle buttons were only wired on empty days before
@@ -4875,7 +4952,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v27</div>
+      <div class="notes" style="opacity:.6;">App version v28</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
