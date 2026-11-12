@@ -161,6 +161,7 @@ main{ flex:1; padding-block:14px 90px; display:flex; flex-direction:column; gap:
   border-radius:6px; padding:8px 4px; font-size:16px; width:100%; text-align:center; min-height:38px;
 }
 .cardiorow input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+.cardiorow.prefilled input{ color:var(--accent); border-style:dashed; }
 .donebtn{
   width:32px; height:32px; border-radius:50%; border:1px solid var(--line); background:var(--surface2);
   color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:15px; flex:0 0 auto;
@@ -468,6 +469,7 @@ main{ gap:14px; padding-block:16px 96px; }
 .donebtn.on{ background:var(--accent); border-color:var(--accent); color:var(--accent-fg); font-weight:800; }
 .cardiorow input{ border:none; border-radius:10px; min-height:44px; }
 .cardiorow input:focus{ outline:none; box-shadow:0 0 0 2px var(--accent); }
+.cardiorow.prefilled input{ color:var(--accent); border:none; background:color-mix(in srgb,var(--accent) 12%, var(--surface2)); }
 .checkrow .label{ font-size:15px; }
 .cardiofield label, .bfield label, .setadjlabel, .rql, .jlabel, .stat .sl, .lastflag, .lastflag{ text-transform:none; letter-spacing:.01em; font-size:11.5px; }
 
@@ -674,6 +676,8 @@ function esc(s){
 }
 
 /* combine program items for the current day with hidden/custom/set-count overrides */
+const isCardioName = (n) => !/mobility|stretch|warm-?up|\brest\b|\bhold\b|update maxes/i.test(n) && /zone 2|\bswim\b|interval|\brun\b|\bruck\b|\bhike\b|\bwalk\b|treadmill|\bbike\b|cycl|\brower\b|rowing|elliptical|stair|aerobic|\bjog|cardio|conditioning|\bsled\b/i.test(n);
+let priorCardio = {};
 function dayItems(){
   const w = WORKOUTS[curIdx];
   const hidden = new Set(dayEdit.hidden || []);
@@ -787,11 +791,11 @@ function watchDayLogs(){
    unfilled set can start from what was actually done last time instead of a blank field */
 let priorTried = new Set(), priorTok = 0;
 async function loadPriorPerf(keep){
-  if (!keep){ priorPerf = {}; priorPerf2 = {}; priorTried = new Set(); priorTok++; }
+  if (!keep){ priorPerf = {}; priorPerf2 = {}; priorCardio = {}; priorTried = new Set(); priorTok++; }
   if (offline || !db) { if (!keep) renderDay(); return; }
   const tok = priorTok, w = WORKOUTS[curIdx];
   // every exercise on the day counts: plan items AND anything added or swapped in
-  const names = Array.from(new Set(dayItems().all.filter(it => it.sets != null).map(it => it.ex))).filter(ex => !priorTried.has(ex));
+  const names = Array.from(new Set(dayItems().all.filter(it => it.sets != null || isCardioName(it.ex)).map(it => it.ex))).filter(ex => !priorTried.has(ex));
   names.forEach(ex => priorTried.add(ex));
   await Promise.all(names.map(async (ex) => {
     try{
@@ -805,6 +809,8 @@ async function loadPriorPerf(keep){
       docs.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
       // skip empty shells: only sessions where a set actually has weight or reps
       const have = docs.filter(d => d && d.sets && d.sets.some(x => x && (Number(x.w) > 0 || Number(x.r) > 0)));
+      const cv = docs.filter(d => d && !d.sets && (Number(d.time) > 0 || Number(d.dist) > 0 || Number(d.hr) > 0));
+      if (cv[0]) priorCardio[ex] = cv[0];
       if (have[0]) priorPerf[ex] = have[0].sets;
       if (have[1]) priorPerf2[ex] = have[1].sets;
     }catch(e){ /* leave unfilled if the lookup fails */ }
@@ -1074,13 +1080,16 @@ function renderDay(){
           </div>`);
       }
       body = rows.join('');
-    } else if (/zone 2|\bswim\b|interval run|\bintervals\b/i.test(item.ex)) {
+    } else if (isCardioName(item.ex)) {
       const log = logDoc[item.k] || {};
-      body = `<div class="cardiorow" data-item="${item.k}">
-        <div class="cardiofield"><label>min</label><input type="number" inputmode="decimal" value="${log.time ?? ''}" data-field="time"></div>
-        <div class="cardiofield"><label>${distUnit()}</label><input type="number" inputmode="decimal" value="${log.dist ?? ''}" data-field="dist"></div>
-        <div class="cardiofield"><label>avg hr</label><input type="number" inputmode="numeric" value="${log.hr ?? ''}" data-field="hr"></div>
-        <div class="cardiofield"><label>incline%</label><input type="number" inputmode="decimal" value="${log.incline ?? ''}" data-field="incline"></div>
+      const pc = priorCardio[item.ex] || null;
+      const fresh = log.time == null && log.dist == null && log.hr == null && log.incline == null;
+      const pf = fresh && pc ? pc : null; // nothing logged today yet: start from last time
+      body = `<div class="cardiorow ${pf ? 'prefilled' : ''}" data-item="${item.k}">
+        <div class="cardiofield"><label>min</label><input type="number" inputmode="decimal" value="${log.time ?? (pf ? pf.time ?? '' : '')}" data-field="time"></div>
+        <div class="cardiofield"><label>${distUnit()}</label><input type="number" inputmode="decimal" value="${log.dist ?? (pf ? pf.dist ?? '' : '')}" data-field="dist"></div>
+        <div class="cardiofield"><label>avg hr</label><input type="number" inputmode="numeric" value="${log.hr ?? (pf ? pf.hr ?? '' : '')}" data-field="hr"></div>
+        <div class="cardiofield"><label>incline%</label><input type="number" inputmode="decimal" value="${log.incline ?? (pf ? pf.incline ?? '' : '')}" data-field="incline"></div>
         <button class="donebtn ${log.done?'on':''}" data-field="done">${log.done?'&#10003;':''}</button>
       </div>`;
     } else {
@@ -1280,13 +1289,14 @@ function wireDayInputs(){
   document.querySelectorAll('.cardiorow').forEach(row => {
     const key = row.dataset.item;
     row.querySelectorAll('input').forEach(inp => {
-      inp.addEventListener('change', () => scheduleCardioSave(row, key));
+      inp.addEventListener('change', () => { row.classList.remove('prefilled'); scheduleCardioSave(row, key); });
     });
     const btn = row.querySelector('.donebtn');
     btn.addEventListener('click', () => {
       const on = !btn.classList.contains('on');
       btn.classList.toggle('on', on);
       btn.innerHTML = on ? '&#10003;' : '';
+      row.classList.remove('prefilled');
       commitCardio(row, key);
     });
   });
@@ -1798,7 +1808,6 @@ async function populateHistorySelect(){
   loadHistory();
 }
 
-function isCardioName(n){ return /zone 2/i.test(n||''); }
 
 async function loadHistory(){
   const thead = document.querySelector('#histTable thead');
@@ -4853,7 +4862,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v25</div>
+      <div class="notes" style="opacity:.6;">App version v26</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
