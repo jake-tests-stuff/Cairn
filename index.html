@@ -171,6 +171,10 @@ main{ flex:1; padding-block:14px 90px; display:flex; flex-direction:column; gap:
 .xpmake{ margin-top:14px; } .xpmake .lab{ font-size:11px; letter-spacing:.06em; color:var(--faint); margin-bottom:6px; }
 .xpin{ width:100%; background:var(--surface2); border:none; border-radius:12px; padding:10px 14px; min-height:44px; color:var(--fg); font-size:16px; }
 .wkmode{ margin-bottom:2px; } .wkex{ border-top:1px solid var(--line); padding-top:8px; margin-top:4px; display:flex; flex-direction:column; gap:2px; }
+.histlink{ align-self:flex-start; background:transparent; border:0; padding:4px 0; color:var(--accent); font:inherit; font-size:13px; font-weight:700; }
+.exhstats{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:8px 0; } .exhstats .sv{ font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .exhstats .stat{ min-width:0; padding:10px; }
+.exhrow .exhead{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.exhrow{ border-top:1px solid var(--line); padding:8px 0; display:flex; flex-direction:column; gap:2px; }
 .swrow.on{ border-color:var(--accent); background:color-mix(in srgb,var(--accent) 14%, var(--surface2)); }
 .donebtn{
   width:32px; height:32px; border-radius:50%; border:1px solid var(--line); background:var(--surface2);
@@ -1140,6 +1144,7 @@ function renderDay(){
         ${(() => { const pr = priorPerf[item.ex]; const sg = (!(item.lift && (item.tw != null || item.pct != null)) && pr) ? suggestNext(item, pr, priorPerf2[item.ex]) : null; return sg ? `<div class="notes">${esc(sg.note)}</div>` : ''; })()}
         ${item.notes ? `<div class="notes">${esc(item.notes)}</div>` : ''}
         ${exNoteHtml(item.ex)}
+        ${!isWarm(item.ex) && (item.sets != null || isCardioName(item.ex)) ? `<button class="histlink" data-exhist="${esc(item.ex)}">History &rsaquo;</button>` : ''}
         ${editControls}
       </div>`;
   });
@@ -1851,22 +1856,94 @@ async function renderRecords(){
 }
 
 /* ===== history view ===== */
+/* ===== exercise history: times done, best marks, trend chart, every session ===== */
+let exhMetric = {};
+async function loadExHistory(name){
+  if (offline || !db) return [];
+  const docs = [];
+  for (const nm of [name].concat(EX_ALIAS[name] || [])){
+    try{ const snap = await db.collection('logs').where('exercise','==',nm).orderBy('date','desc').limit(400).get(); snap.docs.forEach(d => docs.push(d.data())); }catch(e){ console.warn('history load failed', e); }
+  }
+  const cardio = isCardioName(name);
+  return docs.filter(d => d && d.date && (cardio ? (Number(d.time) > 0 || Number(d.dist) > 0 || Number(d.hr) > 0) : (d.sets || []).some(s => s && s.done && Number(s.r) > 0)))
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+function exhSessions(rows, cardio){
+  return rows.map(d => {
+    if (cardio){ const t = Number(d.time) || 0, mi = Number(d.dist) || 0; return { date:d.date, time:t, dist:mi, hr:Number(d.hr) || 0, incline:Number(d.incline) || 0, pace: t && mi ? t / mi : 0 }; }
+    const sets = d.sets.filter(s => s && s.done && Number(s.r) > 0);
+    let top = 0, topR = 0, e1 = 0, vol = 0, reps = 0; const rp = [];
+    sets.forEach(s => { const w = Number(s.w) || 0, r = Number(s.r); reps += r; vol += w * r; if (w > top || (w === top && r > topR)){ top = w; topR = r; } if (w > 0) e1 = Math.max(e1, e1rm(w, Math.min(r, 12))); if (Number(s.rpe) > 0) rp.push(Number(s.rpe)); });
+    return { date:d.date, sets, n:sets.length, top, topR, e1:Math.round(e1), vol:Math.round(vol), reps, rpe: rp.length ? rp.reduce((a, b) => a + b, 0) / rp.length : null };
+  });
+}
+function exHistoryHtml(name, S){
+  const cardio = isCardioName(name);
+  if (!S.length) return `<div class="notes">Nothing logged for ${esc(name)} yet. Check off a set and it shows up here.</div>`;
+  const f = S[0], l = S[S.length - 1];
+  const fmtPace = p => { const m = Math.floor(p), s = Math.round((p - m) * 60); return m + ':' + String(s).padStart(2, '0'); };
+  let stats, metrics;
+  if (cardio){
+    const tMin = S.reduce((a, s) => a + s.time, 0), dTot = S.reduce((a, s) => a + s.dist, 0);
+    const longest = S.reduce((a, s) => s.time > a.time ? s : a, S[0]), far = S.reduce((a, s) => s.dist > a.dist ? s : a, S[0]);
+    const paced = S.filter(s => s.pace), fast = paced.length ? paced.reduce((a, s) => s.pace < a.pace ? s : a, paced[0]) : null;
+    stats = [['Times done', S.length], ['Total time', Math.round(tMin) + ' min'], ['Total distance', (Math.round(dTot * 10) / 10) + ' ' + distUnit()], ['Longest', longest.time + ' min'], ['Farthest', far.dist ? far.dist + ' ' + distUnit() : '-'], ['Best pace', fast ? fmtPace(fast.pace) + '/' + distUnit() : '-']];
+    metrics = [['time', 'Minutes', 'min'], ['dist', 'Distance', distUnit()], ['pace', 'Pace', 'min/' + distUnit()], ['hr', 'Avg HR', 'bpm']];
+  } else {
+    const weighted = S.some(s => s.top > 0);
+    const bestE = S.reduce((a, s) => s.e1 > a.e1 ? s : a, S[0]), heavy = S.reduce((a, s) => (s.top > a.top || (s.top === a.top && s.topR > a.topR)) ? s : a, S[0]);
+    const mostReps = S.reduce((a, s) => Math.max(a, ...s.sets.map(x => Number(x.r))), 0);
+    const rps = S.filter(s => s.rpe != null).slice(-5);
+    stats = weighted
+      ? [['Times done', S.length], ['Best set', heavy.top + '×' + heavy.topR], ['Est. max', bestE.e1 + ' lb'], ['PR date', fmtDate(bestE.date)], ['Total sets', S.reduce((a, s) => a + s.n, 0)], ['Avg RPE', rps.length ? (Math.round(rps.reduce((a, s) => a + s.rpe, 0) / rps.length * 10) / 10) : '-']]
+      : [['Times done', S.length], ['Most reps', mostReps], ['Total sets', S.reduce((a, s) => a + s.n, 0)], ['Total reps', S.reduce((a, s) => a + s.reps, 0)]];
+    metrics = weighted ? [['top', 'Top weight', 'lb'], ['e1', 'Est. max', 'lb'], ['vol', 'Volume', 'lb'], ['reps', 'Reps', 'reps']] : [['reps', 'Total reps', 'reps'], ['n', 'Sets', 'sets']];
+  }
+  const m = metrics.find(x => x[0] === exhMetric[name]) ? exhMetric[name] : metrics[0][0];
+  const span = f.date === l.date ? fmtDate(f.date) : fmtDate(f.date) + ' to ' + fmtDate(l.date);
+  const list = S.slice().reverse().map((s, i, arr) => {
+    const prev = arr[i + 1];
+    let line, chg = '';
+    if (cardio){
+      line = [s.time ? s.time + ' min' : '', s.dist ? s.dist + ' ' + distUnit() : '', s.pace ? fmtPace(s.pace) + '/' + distUnit() : '', s.hr ? s.hr + ' bpm' : '', s.incline ? s.incline + '% incline' : ''].filter(Boolean).join(' · ');
+      if (prev && prev.time && s.time){ const c = Math.round((s.time / prev.time - 1) * 100); chg = c ? (c > 0 ? '▲ ' : '▼ ') + Math.abs(c) + '%' : 'even'; }
+    } else {
+      line = wkSetsTxt(s.sets);
+      if (prev){ const c = wkCmp(s.sets, prev.sets); chg = c == null ? '' : c >= 0.02 ? '▲ ' + Math.round(c * 100) + '%' : c <= -0.05 ? '▼ ' + Math.round(-c * 100) + '%' : 'even'; }
+    }
+    return `<div class="exhrow"><div class="exhead"><b class="tabular" style="font-size:14px;">${fmtDate(s.date)}</b><span class="notes tabular" style="flex:none;">${chg}</span></div><div class="notes tabular">${esc(line)}</div></div>`;
+  }).join('');
+  return `<div class="notes">${esc(span)}</div>
+    <div class="exhstats">${stats.map(([k, v]) => `<div class="stat"><div class="sv tabular">${esc(String(v))}</div><div class="sl">${esc(k)}</div></div>`).join('')}</div>
+    <div class="rbtns">${metrics.map(([k, lab]) => `<button class="mpick ${k === m ? 'on' : ''}" data-exhm="${k}">${lab}</button>`).join('')}</div>
+    <div class="chartbox"><canvas id="exhCanvas" width="600" height="170"></canvas><div class="tooltip" id="exhTip"></div>${S.length < 2 ? '<div class="chartempty">One session so far. The line starts at the next one.</div>' : ''}</div>
+    <div><div class="jlabel">Every session</div><div style="display:flex;flex-direction:column;margin-top:4px;">${list}</div></div>`;
+}
+function wireExHistory(root, name, S, redraw){
+  const cardio = isCardioName(name);
+  const metrics = { top:'lb', e1:'lb', vol:'lb', reps:'reps', n:'sets', time:'min', dist:distUnit(), pace:'min/' + distUnit(), hr:'bpm' };
+  const on = root.querySelector('[data-exhm].on'); const m = on ? on.dataset.exhm : null;
+  const cv = root.querySelector('#exhCanvas');
+  if (cv && m && S.length >= 2){
+    const pts = S.filter(s => s[m] > 0).map(s => ({ date:s.date, v: m === 'pace' ? Math.round(s.pace * 100) / 100 : s[m] }));
+    if (pts.length >= 2) requestAnimationFrame(() => drawLine(cv, root.querySelector('#exhTip'), [{ points:pts, line:true, dots:true }], metrics[m]));
+  }
+  root.querySelectorAll('[data-exhm]').forEach(b => b.onclick = () => { exhMetric[name] = b.dataset.exhm; redraw(); });
+}
+async function openExHistory(name){
+  openSheet(`<div class="plhead"><div><div class="brand">HISTORY</div><h2 style="font-size:24px;">${esc(name)}</h2></div><button class="ghostbtn" id="exhX" style="flex:none;">Close</button></div><div id="exhBody"><div class="notes">Loading…</div></div>`);
+  document.getElementById('exhX').onclick = closeSheet;
+  const S = exhSessions(await loadExHistory(name), isCardioName(name));
+  const body = document.getElementById('exhBody'); if (!body) return;
+  const draw = () => { body.innerHTML = exHistoryHtml(name, S); wireExHistory(body, name, S, draw); };
+  draw();
+}
+document.addEventListener('click', e => { const b = e.target.closest && e.target.closest('[data-exhist]'); if (b){ e.preventDefault(); openExHistory(b.dataset.exhist); } });
+
 function renderHistory(){
   const main = mainEl();
   if (curSub() !== 'history') return;
-  main.innerHTML = `
-    <div class="selectwrap">
-      <select id="histSelect"></select>
-    </div>
-    <div class="chartbox">
-      <canvas id="histCanvas" width="600" height="150"></canvas>
-      <div class="tooltip" id="histTip"></div>
-      <div class="chartempty" id="histEmpty" hidden>No logged sets yet for this exercise.</div>
-    </div>
-    <div class="histwrap">
-      <table class="hist" id="histTable"><thead><tr><th>Date</th><th>Set</th><th>Weight</th><th>Reps</th><th>RPE</th></tr></thead><tbody></tbody></table>
-    </div>
-  `;
+  main.innerHTML = `<div class="selectwrap"><select id="histSelect"></select></div><div id="histBody" class="gstack"><div class="notes">Loading…</div></div>`;
   populateHistorySelect();
 }
 
@@ -1875,37 +1952,26 @@ async function populateHistorySelect(){
   let names = EXNAMES.slice();
   if (!offline && db){
     try{
-      const snap = await db.collection('logs').orderBy('date','desc').limit(500).get();
+      const snap = await db.collection('logs').orderBy('date','desc').limit(1000).get();
       const extra = new Set();
-      snap.docs.forEach(d => { const ex = d.data().exercise; if (ex && !names.includes(ex)) extra.add(ex); });
+      snap.docs.forEach(d => { const ex = d.data().exercise; if (ex && !names.includes(ex) && !isWarm(ex)) extra.add(ex); });
       names = names.concat(Array.from(extra).sort());
     }catch(e){ /* keep static list */ }
   }
+  if (!document.getElementById('histSelect')) return;
   if (!names.includes(histExercise)) histExercise = names[0];
   sel.innerHTML = names.map(n => `<option value="${esc(n)}" ${n===histExercise?'selected':''}>${esc(n)}</option>`).join('');
   sel.onchange = () => { histExercise = sel.value; loadHistory(); };
   loadHistory();
 }
 
-
 async function loadHistory(){
-  const thead = document.querySelector('#histTable thead');
-  const isCardio = isCardioName(histExercise);
-  thead.innerHTML = isCardio
-    ? '<tr><th>Date</th><th>Min</th><th>Mi</th><th>Avg HR</th><th>Incline%</th></tr>'
-    : '<tr><th>Date</th><th>Set</th><th>Weight</th><th>Reps</th><th>RPE</th></tr>';
-  if (offline || !db){
-    histRows = [];
-    drawHistory();
-    return;
-  }
-  try{
-    const snap = await db.collection('logs').where('exercise','==',histExercise).orderBy('date','desc').limit(60).get();
-    histRows = isCardio
-      ? snap.docs.map(d => d.data()).filter(d => d.time != null || d.dist != null || d.hr != null)
-      : snap.docs.map(d => d.data()).filter(d => d.sets && d.sets.length);
-  }catch(e){ console.warn('history load failed', e); histRows = []; }
-  drawHistory();
+  const body = document.getElementById('histBody'); if (!body) return;
+  const name = histExercise; body.innerHTML = '<div class="notes">Loading…</div>';
+  const S = exhSessions(await loadExHistory(name), isCardioName(name));
+  if (histExercise !== name || !document.getElementById('histBody')) return;
+  const draw = () => { body.innerHTML = exHistoryHtml(name, S); wireExHistory(body, name, S, draw); };
+  draw();
 }
 
 function drawHistory(){
@@ -3498,7 +3564,7 @@ async function renderWeek(){
 
 /* ================= PROGRESS: BODYWEIGHT ================= */
 let weightRows = [];
-function drawLine(canvas, tip, series){
+function drawLine(canvas, tip, series, unit){
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.getBoundingClientRect();
   const W = rect.width || 600, H = 170;
@@ -3548,7 +3614,7 @@ function drawLine(canvas, tip, series){
     tip.style.display = 'block';
     tip.style.left = x(bp.date)+'px';
     tip.style.top = y(bp.v)+'px';
-    tip.textContent = `${fmtDate(bp.date)} · ${bp.v} lb`;
+    tip.textContent = `${fmtDate(bp.date)} · ${bp.v} ${unit || 'lb'}`;
   };
   canvas.onmousemove = canvas.ontouchmove = canvas.ontouchstart = hit;
   canvas.onmouseleave = () => { tip.style.display = 'none'; };
@@ -5146,7 +5212,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v33</div>
+      <div class="notes" style="opacity:.6;">App version v34</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
