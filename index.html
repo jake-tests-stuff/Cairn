@@ -170,6 +170,7 @@ main{ flex:1; padding-block:14px 90px; display:flex; flex-direction:column; gap:
 .xprow.on{ background:color-mix(in srgb,var(--accent) 10%,transparent); }
 .xpmake{ margin-top:14px; } .xpmake .lab{ font-size:11px; letter-spacing:.06em; color:var(--faint); margin-bottom:6px; }
 .xpin{ width:100%; background:var(--surface2); border:none; border-radius:12px; padding:10px 14px; min-height:44px; color:var(--fg); font-size:16px; }
+.wkmode{ margin-bottom:2px; } .wkex{ border-top:1px solid var(--line); padding-top:8px; margin-top:4px; display:flex; flex-direction:column; gap:2px; }
 .swrow.on{ border-color:var(--accent); background:color-mix(in srgb,var(--accent) 14%, var(--surface2)); }
 .donebtn{
   width:32px; height:32px; border-radius:50%; border:1px solid var(--line); background:var(--surface2);
@@ -3321,6 +3322,105 @@ async function renderVolume(){
 /* ================= PROGRESS: WEEKLY REVIEW ================= */
 let weekSel = null, weekToken = 0;
 const fmtLb = (n) => Math.round(n).toLocaleString('en-US');
+/* ---- weekly summary: Short (overall) or In depth (every day and exercise) ---- */
+let wkMode = (() => { try{ return localStorage.getItem('cairn_wkmode') || 'short'; }catch(e){ return 'short'; } })();
+function wkMuscles(date, ex){
+  const w = WORKOUTS.find(x => x.date === date), it = w && w.items.find(i => i.ex === ex);
+  const m = (it && it.muscles && it.muscles.length) ? it.muscles : (libMuscles(ex) || (typeof inferMuscles === 'function' ? inferMuscles(ex) : []) || []);
+  return m.filter(x => x !== 'Mobility' && x !== 'Cardio');
+}
+function wkCmp(now, prev){ // fractional change, same rule as the workout recap
+  if (!prev) return null;
+  const a = setLoad(now), b = setLoad(prev);
+  const both = a.weighted && b.weighted;
+  const v = both ? (b.vol ? a.vol / b.vol - 1 : null) : (b.reps ? a.reps / b.reps - 1 : null);
+  const t = both && b.top ? a.top / b.top - 1 : null;
+  if (v == null && t == null) return null;
+  return (t != null && Math.abs(t) > Math.abs(v || 0) && Math.abs(t) >= 0.02) ? t : (v ?? t);
+}
+function wkSetsTxt(sets){
+  const ws = sets.map(s => Number(s.w) || 0), rs = sets.map(s => Number(s.r) || 0);
+  const same = ws.every(x => x === ws[0]) && rs.every(x => x === rs[0]);
+  const body = same ? `${sets.length} × ${rs[0]}${ws[0] ? ' @ ' + ws[0] + ' lb' : ''}` : sets.map((s, i) => (ws[i] ? ws[i] + '×' : '') + rs[i]).join(', ') + (ws.some(x => x) ? ' lb' : ' reps');
+  const rp = sets.map(s => Number(s.rpe)).filter(x => x > 0);
+  return body + (rp.length ? ` · RPE ${Math.round(rp.reduce((a, b) => a + b, 0) / rp.length * 2) / 2}` : '');
+}
+const pctTxt = (c) => c == null ? 'first time logged' : c >= 0.02 ? '▲ ' + Math.round(c * 100) + '%' : c <= -0.05 ? '▼ ' + Math.round(-c * 100) + '%' : 'even';
+async function weekReport(start, end){
+  const host = document.getElementById('wkRep'); if (!host) return;
+  host.innerHTML = '<div class="notes">Building your summary…</div>';
+  if (offline || !db){ host.innerHTML = ''; return; }
+  let docs = [];
+  try{ const snap = await db.collection('logs').where('date','>=',addDaysStr(start, -56)).orderBy('date','asc').limit(3000).get(); docs = snap.docs.map(d => d.data()).filter(x => x && x.date && x.date <= end); }catch(e){ host.innerHTML = '<div class="notes">Could not build the summary.</div>'; return; }
+  if (!document.getElementById('wkRep')) return;
+  const lift = d => (d.sets || []).filter(s => s && s.done && Number(s.r) > 0);
+  const last = {}; // exercise -> latest sets before a given point, filled as we walk forward
+  const days = {}, prevWeek = { lb:0 }, prevStart = addDaysStr(start, -7);
+  const exWeek = {}; // exercise -> { first prior sets before week, latest sets in week, name }
+  docs.forEach(d => {
+    const ex = String(d.exercise || ''); if (!ex || isWarm(ex)) return;
+    const sets = lift(d);
+    if (d.date < start){
+      if (sets.length){ last[ex] = sets; if (d.date >= prevStart) prevWeek.lb += setLoad(sets).vol; }
+      return;
+    }
+    const day = days[d.date] = days[d.date] || { ex:[], cardio:[] };
+    if (sets.length){
+      const prior = last[ex] || null;
+      const c = wkCmp(sets, prior);
+      const it = { ex, sets, prior, cmp:c, tip: trendTip(sets, prior || [], { ex, reps:null }), muscles: wkMuscles(d.date, ex) };
+      day.ex.push(it);
+      const e = exWeek[ex] = exWeek[ex] || { ex, before: last[ex] || null }; e.now = sets;
+      last[ex] = sets;
+    } else if (!d.sets && (Number(d.time) > 0 || Number(d.dist) > 0)){
+      day.cardio.push({ ex, time:Number(d.time) || 0, dist:Number(d.dist) || 0, hr:Number(d.hr) || 0 });
+    }
+  });
+  const dates = Object.keys(days).sort();
+  const liftDays = dates.filter(d => days[d].ex.length), cardioN = dates.reduce((a, d) => a + days[d].cardio.length, 0);
+  if (!dates.length){ host.innerHTML = `<div class="card"><div class="exname">Summary</div><div class="notes">Nothing logged this week yet.</div></div>`; return; }
+  let sets = 0, lb = 0, cmin = 0; const mus = {};
+  dates.forEach(d => { days[d].ex.forEach(e => { sets += e.sets.length; lb += setLoad(e.sets).vol; e.muscles.forEach(m => mus[m] = (mus[m] || 0) + e.sets.length); }); days[d].cardio.forEach(c => cmin += c.time); });
+  // progress across the week: each exercise's last session this week vs its last session before the week
+  const ex = Object.values(exWeek).map(e => Object.assign(e, { c: wkCmp(e.now, e.before) }));
+  const cmpd = ex.filter(e => e.c != null), up = cmpd.filter(e => e.c >= 0.02), down = cmpd.filter(e => e.c <= -0.05), firsts = ex.filter(e => e.c == null);
+  const best = up.slice().sort((a, b) => b.c - a.c)[0];
+  const nm = s => s.replace(/\s*\(.*?\)/, '');
+  const mE = Object.entries(mus).sort((a, b) => b[1] - a[1]);
+  const big = ['Chest','Back','Shoulders','Quads','Hamstrings','Glutes'];
+  const well = mE.filter(([, n]) => n >= 10).map(([m]) => m), mid = mE.filter(([, n]) => n >= 4 && n < 10).map(([m]) => m), lite = mE.filter(([, n]) => n < 4).map(([m]) => m), none = big.filter(m => !mus[m]);
+  const dPct = prevWeek.lb > 0 ? Math.round((lb / prevWeek.lb - 1) * 100) : null;
+  const lines = [];
+  lines.push(`${liftDays.length} lifting ${liftDays.length === 1 ? 'day' : 'days'}${cardioN ? ` and ${cardioN} cardio ${cardioN === 1 ? 'session' : 'sessions'}${cmin ? ' (' + Math.round(cmin) + ' min)' : ''}` : ''}. ${sets} sets, ${fmtLb(Math.round(lb))} lb${dPct != null ? `, ${dPct >= 0 ? 'up' : 'down'} ${Math.abs(dPct)}% from last week` : ''}.`);
+  if (cmpd.length) lines.push(`Beat your last session on ${up.length} of ${cmpd.length} exercises${best ? `. Biggest jump: ${nm(best.ex)} (+${Math.round(best.c * 100)}%)` : ''}${down.length ? `. Slipped: ${down.slice(0, 3).map(e => nm(e.ex)).join(', ')}` : ''}.`);
+  if (firsts.length) lines.push(firsts.length === 1 ? `${nm(firsts[0].ex)} is new this week, so it sets your baseline.` : `${firsts.length} exercises are new this week, so they set your baseline.`);
+  const mt = [well.length ? 'Well covered: ' + well.join(', ') : '', mid.length ? 'Moderate: ' + mid.join(', ') : '', lite.length ? 'Light: ' + lite.join(', ') : '', none.length ? 'Not trained: ' + none.join(', ') : ''].filter(Boolean).join('. ');
+  if (mt) lines.push(mt + '.');
+  const verdict = !cmpd.length ? 'Baseline week. Next week, try to beat these numbers.'
+    : down.length > up.length ? 'Lighter week overall. If that was not a planned deload, look at sleep, food and stress, and repeat these weights next week.'
+    : up.length >= Math.ceil(cmpd.length * 0.6) ? 'Strong week. Next week, add weight where you hit the top of your reps and add a rep everywhere else.'
+    : 'Steady week. Next week, push for one more rep on the lifts that held even.';
+  const sumCard = `<div class="card"><div class="exname">Summary</div><div class="notes" style="color:var(--fg);font-weight:600;">${esc(verdict)}</div>${lines.map(l => `<div class="notes">${esc(l)}</div>`).join('')}</div>`;
+  const toggle = `<div class="rbtns wkmode"><button class="mpick ${wkMode === 'short' ? 'on' : ''}" data-wkm="short">Short</button><button class="mpick ${wkMode === 'deep' ? 'on' : ''}" data-wkm="deep">In depth</button></div>`;
+  let deep = '';
+  if (wkMode === 'deep'){
+    deep = dates.map(d => {
+      const day = days[d], w = WORKOUTS.find(x => x.date === d);
+      const dc = day.ex.filter(e => e.cmp != null), du = dc.filter(e => e.cmp >= 0.02).length, dd = dc.filter(e => e.cmp <= -0.05).length;
+      const dSets = day.ex.reduce((a, e) => a + e.sets.length, 0), dLb = day.ex.reduce((a, e) => a + setLoad(e.sets).vol, 0);
+      const dm = {}; day.ex.forEach(e => e.muscles.forEach(m => dm[m] = (dm[m] || 0) + e.sets.length));
+      const dv = !day.ex.length ? 'Cardio day.' : !dc.length ? 'New baseline for these lifts.' : dd > du ? `Below last time on ${dd} of ${dc.length}. One off day is fine.` : du ? `Beat last time on ${du} of ${dc.length}.` : 'Matched last time across the board.';
+      const exRows = day.ex.map(e => `<div class="wkex"><div class="exhead"><div style="font-weight:700;font-size:14px;">${esc(nm(e.ex))}</div><span class="notes tabular" style="flex:none;">${pctTxt(e.cmp)}</span></div><div class="notes tabular">${esc(wkSetsTxt(e.sets))}${e.prior ? ' · last time ' + esc(wkSetsTxt(e.prior).replace(/ · RPE.*/, '')) : ''}</div><div class="notes" style="color:var(--fg);">${esc(e.tip)}</div></div>`).join('');
+      const cRows = day.cardio.map(c => `<div class="wkex"><div style="font-weight:700;font-size:14px;">${esc(nm(c.ex))}</div><div class="notes tabular">${[c.time ? c.time + ' min' : '', c.dist ? c.dist + ' ' + distUnit() : '', c.hr ? 'avg HR ' + c.hr : ''].filter(Boolean).join(' · ')}</div></div>`).join('');
+      const dow = new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday:'long', month:'short', day:'numeric' });
+      return `<div class="card"><div class="exname">${esc(dow)}</div><div class="notes">${esc(w ? w.focus : 'Workout')}${dSets ? ` · ${dSets} sets · ${fmtLb(Math.round(dLb))} lb` : ''}</div><div class="notes" style="color:var(--fg);">${esc(dv)}${Object.keys(dm).length ? ' Hit ' + esc(Object.entries(dm).sort((a, b) => b[1] - a[1]).map(([m, n]) => m + ' ' + n).join(', ')) + '.' : ''}</div>${exRows}${cRows}</div>`;
+    }).join('');
+  }
+  host.innerHTML = toggle + sumCard + deep;
+  document.querySelectorAll('.wkbyw').forEach(x => x.style.display = wkMode === 'deep' ? 'none' : '');
+  host.querySelectorAll('[data-wkm]').forEach(b => b.onclick = () => { wkMode = b.dataset.wkm; try{ localStorage.setItem('cairn_wkmode', wkMode); }catch(e){} weekReport(start, end); });
+}
+
 async function renderWeek(){
   const main = mainEl();
   const real = WORKOUTS.filter(w => !w.synthetic);
@@ -3348,7 +3448,7 @@ async function renderWeek(){
       snap.docs.forEach(d => {
         const x = d.data(); if (!x || !x.date || x.date > end || !x.sets) return;
         let lb = 0, n = 0, top = 0;
-        x.sets.forEach(s => { if (s && s.done && s.w > 0 && s.r > 0){ lb += s.w*s.r; n++; top = Math.max(top, s.w); } });
+        x.sets.forEach(s => { if (s && s.done && s.r > 0){ n++; if (s.w > 0){ lb += s.w*s.r; top = Math.max(top, s.w); } } }); // bodyweight sets count too
         if (!n) return;
         if (x.date < start){ prevTotal.lb += lb; return; }
         const pd = perDay[x.date] = perDay[x.date] || { lb:0, sets:0, ex:[] };
@@ -3388,10 +3488,12 @@ async function renderWeek(){
       <div class="stat"><div class="sv tabular">${sets}</div><div class="sl">sets done</div></div>
     </div>
     <div class="notes">${delta == null ? 'No lifting logged the week before to compare.' : `${delta >= 0 ? 'Up' : 'Down'} ${Math.abs(delta)}% from last week (${fmtLb(prevTotal.lb)} lb).`}${skipped ? ` ${skipped} skipped day${skipped>1?'s':''}.` : ''} Every checked set counts, warm-ups included.</div>
-    <div class="card"><div class="exname">By workout</div>${rows}</div>
+    <div id="wkRep"></div>
+    <div class="card wkbyw"><div class="exname">By workout</div>${rows}</div>
     <div class="card"><div class="exname">How you felt</div><div class="rgrid">${rsq}</div></div>
     <div class="card"><div class="exname">Deload check</div><div class="notes">${esc(advice)}</div>${!live && !offline ? '<div class="rbtns"><button class="ghostbtn" id="wkDeload">Start a deload week</button></div>' : ''}</div>`;
   const bd = document.getElementById('wkDeload'); if (bd) bd.onclick = () => setDeload(true);
+  weekReport(start, end);
 }
 
 /* ================= PROGRESS: BODYWEIGHT ================= */
@@ -5039,7 +5141,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v30</div>
+      <div class="notes" style="opacity:.6;">App version v31</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
