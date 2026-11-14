@@ -4943,8 +4943,8 @@ function renderBuilder(keepScroll){
   const top = el ? el.scrollTop : 0;
   if (!el || s.hidden){ openSheet(builderHtml()); el = s.querySelector('.sheetin'); } else { el.innerHTML = builderHtml(); el.scrollTop = keepScroll ? top : 0; }
 }
-function openBuilder(id){
-  bld = newBuilder(id ? customPlans[id] : null);
+function openBuilder(id, keep){
+  if (!keep) bld = newBuilder(id ? customPlans[id] : null);
   renderBuilder();
   const s = document.getElementById('sheet');
   s.oninput = (e) => {
@@ -4969,7 +4969,9 @@ function openBuilder(id){
     if (d.bw){ bld.weeks = Number(d.bw); renderBuilder(true); }
     else if (d.bm){ bld.mode = d.bm; renderBuilder(true); }
     else if (d.bd != null){ const day = bld.days[d.bd]; day.on = !day.on; if (day.on && !day.items.length) day.items.push({ ex:'', sets:'', reps:'' }); renderBuilder(true); }
-    else if (d.badd != null){ bld.days[d.badd].items.push({ ex:'', sets:'', reps:'' }); renderBuilder(true); }
+    else if (d.badd != null){ const di = d.badd; const day = bld.days[di]; if (day.items.length === 1 && !day.items[0].ex.trim()) day.items.length = 0;
+      // pick from the list: tap adds, tap again removes, Done goes back to the plan
+      openExercisePicker((name) => { bld.days[di].items.push({ ex:name, sets:'3', reps:'8-10' }); }, () => openBuilder(null, true), (name) => { const a = bld.days[di].items, i = a.map(x => x.ex).lastIndexOf(name); if (i >= 0) a.splice(i, 1); }); }
     else if (d.brm){ const [i, n] = d.brm.split(':'); bld.days[i].items.splice(Number(n), 1); renderBuilder(true); }
     else if (d.bdel){ bld.deload = !bld.deload; renderBuilder(true); }
     else if (b.id === 'bCancel'){ closeSheet(); }
@@ -5141,7 +5143,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v31</div>
+      <div class="notes" style="opacity:.6;">App version v32</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
