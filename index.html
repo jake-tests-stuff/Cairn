@@ -772,6 +772,7 @@ async function init(){
   watchDayEdit();
   watchReady();
   watchSkips();
+  setTimeout(maybeWeeklyPopup, 2500);
   watchDeload();
   watchExNotes();
   watchCustom();
@@ -3099,7 +3100,7 @@ function pushRestCancel(){
 const localAt = (ds, hhmm) => { const [y,m,d] = ds.split('-').map(Number), [h,mi] = String(hhmm||'18:30').split(':').map(Number); return new Date(y, m-1, d, h||0, mi||0).getTime(); };
 function plannedOn(ds){
   const w = WORKOUTS.find(x => x.date === ds); if (!w) return null;
-  const items = (w.planHide ? w.items.filter(it => it.plan) : w.items).filter(it => !isWarm(it.ex) && !/mobility/i.test(it.ex));
+  const items = (w.planHide ? w.items.filter(it => it.plan) : w.items).filter(it => !isWarm(it.ex) && !/mobility|\brest\b/i.test(it.ex)); // rest days are not workouts to nag about
   return items.length ? w : null;
 }
 function nextDeloadStart(from){
@@ -3412,6 +3413,37 @@ function wkSetsTxt(sets){
   return body + (rp.length ? ` · RPE ${Math.round(rp.reduce((a, b) => a + b, 0) / rp.length * 2) / 2}` : '');
 }
 const pctTxt = (c) => c == null ? 'first time logged' : c >= 0.02 ? '▲ ' + Math.round(c * 100) + '%' : c <= -0.05 ? '▼ ' + Math.round(-c * 100) + '%' : 'even';
+/* ---- weekly summary pop-up: the first time the app opens after Sunday's summary time ---- */
+function summaryWeek(){
+  const p = typeof pushPrefs === 'function' ? pushPrefs() : { weeklyTime:'19:00' };
+  const [hh, mm] = String(p.weeklyTime || '19:00').split(':').map(Number);
+  const now = new Date(), d = new Date(now); d.setHours(hh || 19, mm || 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay()); // this week's Sunday at summary time
+  if (d > now) d.setDate(d.getDate() - 7); // not out yet: last Sunday's
+  const end = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  return { start: addDaysStr(end, -6), end };
+}
+let wkPopTries = 0;
+function maybeWeeklyPopup(){
+  if (offline || !db) return;
+  const wk = summaryWeek(); let seen = null;
+  try{ seen = localStorage.getItem('cairn_wkpop'); }catch(e){ return; }
+  if (seen === wk.end) return;
+  const sh = document.getElementById('sheet');
+  if (sh && !sh.hidden){ if (++wkPopTries < 40) setTimeout(maybeWeeklyPopup, 3000); return; } // wait for the check-in to close
+  try{ localStorage.setItem('cairn_wkpop', wk.end); }catch(e){}
+  db.collection('logs').where('date','>=',wk.start).orderBy('date','asc').limit(1).get().then(snap => {
+    if (!snap.docs.length || snap.docs[0].data().date > wk.end) return; // nothing logged that week: no pop-up
+    const s2 = document.getElementById('sheet'); if (s2 && !s2.hidden) return;
+    showWeeklyPopup(wk);
+  }).catch(() => {});
+}
+function showWeeklyPopup(wk){
+  openSheet(`<div class="plhead"><div><div class="brand">WEEKLY SUMMARY</div><h2 style="font-size:24px;">${fmtDate(wk.start)} to ${fmtDate(wk.end)}</h2></div><button class="ghostbtn" id="wpX" style="flex:none;">Close</button></div><div id="wkRep"></div>`);
+  document.getElementById('wpX').onclick = closeSheet;
+  weekReport(wk.start, wk.end);
+}
+
 async function weekReport(start, end){
   const host = document.getElementById('wkRep'); if (!host) return;
   host.innerHTML = '<div class="notes">Building your summary…</div>';
@@ -3457,7 +3489,7 @@ async function weekReport(start, end){
   const well = mE.filter(([, n]) => n >= 10).map(([m]) => m), mid = mE.filter(([, n]) => n >= 4 && n < 10).map(([m]) => m), lite = mE.filter(([, n]) => n < 4).map(([m]) => m), none = big.filter(m => !mus[m]);
   const dPct = prevWeek.lb > 0 ? Math.round((lb / prevWeek.lb - 1) * 100) : null;
   const lines = [];
-  lines.push(`${liftDays.length} lifting ${liftDays.length === 1 ? 'day' : 'days'}${cardioN ? ` and ${cardioN} cardio ${cardioN === 1 ? 'session' : 'sessions'}${cmin ? ' (' + Math.round(cmin) + ' min)' : ''}` : ''}. ${sets} sets, ${fmtLb(Math.round(lb))} lb${dPct != null ? `, ${dPct >= 0 ? 'up' : 'down'} ${Math.abs(dPct)}% from last week` : ''}.`);
+  lines.push(`${liftDays.length} lifting ${liftDays.length === 1 ? 'day' : 'days'}${cardioN ? ` and ${cardioN} cardio ${cardioN === 1 ? 'session' : 'sessions'}${cmin ? ' (' + Math.round(cmin) + ' min)' : ''}` : ''}. ${sets} ${sets === 1 ? "set" : "sets"}, ${fmtLb(Math.round(lb))} lb${dPct != null ? `, ${dPct >= 0 ? 'up' : 'down'} ${Math.abs(dPct)}% from last week` : ''}.`);
   if (cmpd.length) lines.push(`Beat your last session on ${up.length} of ${cmpd.length} exercises${best ? `. Biggest jump: ${nm(best.ex)} (+${Math.round(best.c * 100)}%)` : ''}${down.length ? `. Slipped: ${down.slice(0, 3).map(e => nm(e.ex)).join(', ')}` : ''}.`);
   if (firsts.length) lines.push(firsts.length === 1 ? `${nm(firsts[0].ex)} is new this week, so it sets your baseline.` : `${firsts.length} exercises are new this week, so they set your baseline.`);
   const mt = [well.length ? 'Well covered: ' + well.join(', ') : '', mid.length ? 'Moderate: ' + mid.join(', ') : '', lite.length ? 'Light: ' + lite.join(', ') : '', none.length ? 'Not trained: ' + none.join(', ') : ''].filter(Boolean).join('. ');
@@ -5215,7 +5247,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v36</div>
+      <div class="notes" style="opacity:.6;">App version v37</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
