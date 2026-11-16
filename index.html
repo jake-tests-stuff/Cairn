@@ -804,6 +804,19 @@ function watchDayLogs(){
 
 /* pull the most recent PRIOR session's numbers for each exercise on this day, so an
    unfilled set can start from what was actually done last time instead of a blank field */
+/* logs for one exercise, newest first. The fast query needs a Firestore composite index;
+   if that index is missing the query fails, so fall back to a plain name match and sort here. */
+async function logsByExercise(nm, before, n){
+  try{
+    let q = db.collection('logs').where('exercise','==',nm);
+    if (before) q = q.where('date','<',before);
+    const snap = await q.orderBy('date','desc').limit(n).get();
+    return snap.docs.map(d => d.data());
+  }catch(e){
+    const snap = await db.collection('logs').where('exercise','==',nm).limit(1000).get();
+    return snap.docs.map(d => d.data()).filter(x => x && x.date && (!before || x.date < before)).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, n);
+  }
+}
 let priorTried = new Set(), priorTok = 0;
 async function loadPriorPerf(keep){
   if (!keep){ priorPerf = {}; priorPerf2 = {}; priorCardio = {}; priorTried = new Set(); priorTok++; }
@@ -816,10 +829,7 @@ async function loadPriorPerf(keep){
     try{
       const docs = [];
       for (const nm of [ex].concat(EX_ALIAS[ex] || [])){
-        const snap = await db.collection('logs')
-          .where('exercise','==',nm).where('date','<',w.date)
-          .orderBy('date','desc').limit(8).get();
-        snap.docs.forEach(d => docs.push(d.data()));
+        (await logsByExercise(nm, w.date, 8)).forEach(d => docs.push(d));
       }
       docs.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
       // skip empty shells: only sessions where a set actually has weight or reps
@@ -1079,10 +1089,12 @@ function renderDay(){
         const fresh = !log.sets || !log.sets[i];
         const p0 = fresh && prior ? (prior[i] || null) : null; // only offer a prior value when nothing's logged today yet
         const p = p0 || (fresh && sug ? { w:null, r:null, rpe:null } : null);
-        const wVal = s.w ?? (sug && fresh ? sug.w : (p ? p.w : null));
-        const rVal = s.r ?? (sug && fresh && sug.reps ? sug.reps : (p ? p.r : null));
-        const rpeVal = s.rpe ?? (p ? p.rpe : null);
-        const isPrefilled = !!(p && s.w == null && s.r == null);
+        // a lift with a planned weight starts from the plan, not last time (last time shows underneath)
+        const planFill = (planDriven || !!rp) && fresh && setTw != null; // ramp warm-ups follow today's plan too
+        const wVal = s.w ?? (planFill ? setTw : (sug && fresh ? sug.w : (p ? p.w : null)));
+        const rVal = s.r ?? (planFill ? (parseInt(setReps) || (p ? p.r : null)) : (sug && fresh && sug.reps ? sug.reps : (p ? p.r : null)));
+        const rpeVal = s.rpe ?? (planFill ? null : (p ? p.rpe : null));
+        const isPrefilled = !!((p || planFill) && s.w == null && s.r == null);
         const targetTxt = (setTw!=null ? setTw+'×' : '') + (setReps||'-') + (item.rpe? ' @'+item.rpe : '');
         rows.push(`
           <div class="setrow ${isPrefilled?'prefilled':''}" data-item="${item.k}" data-set="${i}">
@@ -1095,6 +1107,10 @@ function renderDay(){
           </div>`);
       }
       body = rows.join('');
+      if (planDriven && prior0 && prior0.length && !isWarm(item.ex)){
+        const ls = prior0.filter(x => x && (Number(x.w) > 0 || Number(x.r) > 0));
+        if (ls.length) body += `<div class="notes tabular">Last time: ${esc(ls.map(x => (Number(x.w) ? x.w + '×' : '') + (x.r ?? '-')).join(', '))}</div>`;
+      }
     } else if (isCardioName(item.ex)) {
       const log = logDoc[item.k] || {};
       const pc = priorCardio[item.ex] || null;
@@ -1863,7 +1879,7 @@ async function loadExHistory(name){
   if (offline || !db) return [];
   const docs = [];
   for (const nm of [name].concat(EX_ALIAS[name] || [])){
-    try{ const snap = await db.collection('logs').where('exercise','==',nm).orderBy('date','desc').limit(400).get(); snap.docs.forEach(d => docs.push(d.data())); }catch(e){ console.warn('history load failed', e); }
+    try{ (await logsByExercise(nm, null, 400)).forEach(d => docs.push(d)); }catch(e){ console.warn('history load failed', e); }
   }
   const cardio = isCardioName(name);
   return docs.filter(d => d && d.date && (cardio ? (Number(d.time) > 0 || Number(d.dist) > 0 || Number(d.hr) > 0) : (d.sets || []).some(s => s && s.done && Number(s.r) > 0)))
@@ -2892,7 +2908,7 @@ async function findPRs(w){
     if (!best){ if (log.pr) out.stale.push(it.k); continue; }
     let prior = 0;
     try{
-      const snap = await db.collection('logs').where('exercise','==',it.ex).where('date','<',w.date).orderBy('date','desc').limit(100).get();
+      const snap = { docs: (await logsByExercise(it.ex, w.date, 100)).map(x => ({ data: () => x })) };
       snap.docs.forEach(d => { ((d.data() || {}).sets || []).forEach(s => { const wt = Number(s && s.w), r = Number(s && s.r); if (s && s.done && wt > 0 && r >= 1 && r <= 12) prior = Math.max(prior, e1rm(wt, r)); }); });
     }catch(e){ continue; }
     if (!prior){ if (log.pr) out.stale.push(it.k); continue; }
@@ -5247,7 +5263,7 @@ function renderSettings(){
     <div class="card">
       <div class="exname">Account</div>
       <div class="notes" id="acctLine"></div>
-      <div class="notes" style="opacity:.6;">App version v37</div>
+      <div class="notes" style="opacity:.6;">App version v38</div>
       <button class="ghostbtn" id="acctOut" style="align-self:flex-start;">Sign out</button>
     </div>
     <div class="card">
